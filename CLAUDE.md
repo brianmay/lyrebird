@@ -4,7 +4,7 @@ A Rust CLI tool for identifying and renaming HandBrake video rips (DVD/Blu-ray) 
 
 ## Why this exists
 
-Ripping multi-title discs (TV box sets, movie collections) with HandBrake produces generically-named files (`title_01.mkv`, `title_02.mkv`, ...) that need to be identified and renamed to something sane (e.g. Jellyfin/Plex-friendly `Show - S01E02 - Episode Title.mkv`). Doing this by watching each file and renaming by hand is slow and error-prone.
+Ripping multi-title discs (TV box sets, movie collections) with HandBrake produces generically-named files (`title_01.mkv`, `title_02.mkv`, ...) that need to be identified and renamed to something sane (e.g. Jellyfin/Plex-friendly `The Owl House - s01e01 - A Lying Witch and a Warden.mkv`, inside the right series/season folder). Doing this by watching each file and renaming by hand is slow and error-prone.
 
 `lyrebird` splits the problem into two clean stages:
 
@@ -69,19 +69,37 @@ movie_rip.mkv	movie	603
 
 | Kind | Columns after `source` | Behavior |
 |---|---|---|
-| `tv` | `tmdb_series_id`, `season`, `episode` | Look up series name + episode title + runtime from TMDB. Build filename `Series - SxxEyy - Episode Title.mkv`. |
-| `movie` | `tmdb_movie_id` | Look up movie title + year + runtime from TMDB. Build filename `Title (Year).mkv`. |
-| `manual` | `new_name`, `expected_duration_secs` (optional) | Not on TMDB (specials/extras). Filename supplied directly, duration optional. |
+| `tv` | `tmdb_series_id`, `season`, `episode` | Look up series name + first-air year + episode title + runtime from TMDB. Build relative path `Series (Year)/Season SS/Series - sSSeEE - Episode Title.mkv` (see Output naming convention). |
+| `movie` | `tmdb_movie_id` | Look up movie title + year + runtime from TMDB. Build relative path `Title (Year)/Title (Year).mkv`. |
+| `manual` | `new_name`, `expected_duration_secs` (optional) | Not on TMDB (specials/extras). Target path supplied directly, duration optional. |
 
 Comment lines start with `#` and should be skipped.
+
+## Output naming convention (decided 2026-07-11)
+
+Matches Brian's existing library layout, previously produced by "Rename My TV" (folder `%N (%Y)/Season %SZ/`, filename `%N - s%SZe%EZ[-%EZ] - %T`). Real examples from `/minion/media`:
+
+- **TV**: `Series (Year)/Season SS/Series - sSSeEE - Episode Title.mkv`
+  - e.g. `The Owl House (2020)/Season 01/The Owl House - s01e01 - A Lying Witch and a Warden.mkv`
+  - Lowercase `s`/`e`, both zero-padded to 2 digits. Year appears in the series folder only, **not** in the filename. Year = TMDB `first_air_date` year for the series.
+- **Movie**: `Title (Year)/Title (Year).mkv`
+  - e.g. `Airplane! (1980)/Airplane! (1980).mkv`
+
+Consequences for the design:
+
+- **Targets are relative paths, not bare filenames.** `RenamePlan.new` holds e.g. `The Owl House (2020)/Season 01/....mkv`. `apply` must create parent directories (`fs::create_dir_all`) before renaming.
+- **Validation changes**: path separators between the folder/season/filename components are expected, so the "contains path separators" check applies per-component instead (no empty components, no illegal filename chars, no `..`).
+- **Library roots differ by type** (`/minion/media/tv` vs `/minion/media/movies`). Not yet decided how apply targets the root: run `apply` from within the correct root, or a `--dest-root` flag. For v1, running from the destination root is fine.
+- **Spaces (and `!` etc.) in names are a non-issue in Rust** — `std::fs::rename` takes paths directly, no shell involved. Only the bash prototypes needed quoting care.
+- **Multi-episode files**: the Rename My TV format supports episode ranges (`s%SZe%EZ[-%EZ]`) for rips containing multiple episodes. The manifest `tv` row may need an episode-range form later; not needed for v1.
 
 ## Intermediate format: RenamePlan / `renames.txt`
 
 Output of the resolve stage, input to validate/apply stages. Three tab-separated columns:
 
 ```
-title_01.mkv	Show - S01E01 - Pilot.mkv	1320
-title_02.mkv	Show - S01E02 - The Reveal.mkv	1350
+title_01.mkv	The Owl House (2020)/Season 01/The Owl House - s01e01 - A Lying Witch and a Warden.mkv	1320
+title_02.mkv	The Owl House (2020)/Season 01/The Owl House - s01e02 - Witches Before Wizards.mkv	1350
 ```
 
 Columns: `old_path`, `new_path`, `expected_duration_secs` (may be blank if unknown).
@@ -100,7 +118,7 @@ Run before any renames happen. Should catch:
 - **No-op rename**: `old_path == new_path`.
 - **Source doesn't exist**: `old_path` not found on disk.
 - **Target already exists**: `new_path` already exists (would silently overwrite without `-n`/no-clobber logic).
-- **Invalid target filename**: contains path separators, empty string, or unexpected extension (warn, not necessarily error).
+- **Invalid target path**: empty or `..` path components, illegal filename characters, or unexpected extension (warn, not necessarily error). Note: path separators are *expected* in targets (series/season folders — see Output naming convention).
 - **Duration mismatch** (see below): actual file duration vs. expected duration from the plan, outside tolerance.
 
 ### Duration cross-check details
@@ -178,7 +196,8 @@ lyrebird sheet    *.mkv                                # Stage 0 (maybe): genera
 
 ## Open questions / not yet decided
 
-- Exact output filename convention — current draft is `Series - SxxEyy - Episode Title.mkv` (Jellyfin/Plex-friendly), but Brian's actual Jellyfin library convention should be confirmed (he self-hosts Jellyfin at `jellyfin.linuxpenguins.xyz`).
+- ~~Exact output filename convention~~ — **decided**, see "Output naming convention" above.
+- How `apply` locates the library root (`/minion/media/tv` vs `/minion/media/movies`) — run from within the root, or `--dest-root` flag.
 - Whether `lyrebird sheet` (contact sheet generation) should live inside the Rust binary (shelling out to `ffmpeg`) or stay a separate shell script — leaning toward folding it in for a single cohesive tool, but not decided.
 - Whether to add the fuzzy title-similarity cross-check (manifest supplies expected title, compare against TMDB's actual title via `strsim`) — discussed as a nice-to-have, not required for v1.
 - Tolerance values for duration mismatch (±10%/±30s suggested, not finalized).
