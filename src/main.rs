@@ -1,0 +1,58 @@
+// Skeleton: module types exist ahead of the pipeline implementation.
+#![allow(dead_code)]
+
+mod ffprobe;
+mod manifest;
+mod rename_plan;
+mod tmdb;
+mod validate;
+
+use std::path::PathBuf;
+
+use anyhow::Result;
+use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+#[command(name = "lyrebird", version, about = "Identify and rename HandBrake rips using TMDB metadata")]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Resolve a TMDB manifest into a rename plan (renames.txt)
+    Resolve {
+        /// Tab-separated manifest: source, kind (tv/movie/manual), kind-specific columns
+        manifest: PathBuf,
+        /// Where to write the resolved rename plan
+        #[arg(short, long, default_value = "renames.txt")]
+        output: PathBuf,
+    },
+    /// Check a rename plan for errors without touching the filesystem
+    Validate {
+        /// Rename plan produced by `resolve`
+        plan: PathBuf,
+    },
+    /// Execute the renames in a plan
+    Apply {
+        /// Rename plan produced by `resolve`
+        plan: PathBuf,
+    },
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Command::Resolve { manifest, output } => {
+            anyhow::bail!("resolve {} -> {}: not yet implemented", manifest.display(), output.display())
+        }
+        Command::Validate { plan } => {
+            anyhow::bail!("validate {}: not yet implemented", plan.display())
+        }
+        Command::Apply { plan } => {
+            anyhow::bail!("apply {}: not yet implemented", plan.display())
+        }
+    }
+}
