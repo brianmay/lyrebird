@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(jj describe -m 'Implement the resolve subcommand *)",
+      "Bash(jj log *)"
+    ]
+  }
+}

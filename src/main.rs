@@ -1,6 +1,3 @@
-// Skeleton: module types exist ahead of the pipeline implementation.
-#![allow(dead_code)]
-
 mod ffprobe;
 mod manifest;
 mod rename_plan;
@@ -13,7 +10,11 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "lyrebird", version, about = "Identify and rename HandBrake rips using TMDB metadata")]
+#[command(
+    name = "lyrebird",
+    version,
+    about = "Identify and rename HandBrake rips using TMDB metadata"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -46,7 +47,15 @@ fn main() -> Result<()> {
 
     match cli.command {
         Command::Resolve { manifest, output } => {
-            anyhow::bail!("resolve {} -> {}: not yet implemented", manifest.display(), output.display())
+            let rows = manifest::parse(&manifest)?;
+            let tmdb = tmdb::Tmdb::from_env()?;
+            let plans = rename_plan::resolve(&rows, &tmdb)?;
+            for plan in &plans {
+                println!("{} -> {}", plan.old, plan.new);
+            }
+            rename_plan::write(&plans, &output)?;
+            println!("wrote {} rename(s) to {}", plans.len(), output.display());
+            Ok(())
         }
         Command::Validate { plan } => {
             anyhow::bail!("validate {}: not yet implemented", plan.display())

@@ -201,7 +201,7 @@ lyrebird sheet    *.mkv                                # Stage 0 (maybe): genera
 - Whether `lyrebird sheet` (contact sheet generation) should live inside the Rust binary (shelling out to `ffmpeg`) or stay a separate shell script — leaning toward folding it in for a single cohesive tool, but not decided.
 - Whether to add the fuzzy title-similarity cross-check (manifest supplies expected title, compare against TMDB's actual title via `strsim`) — discussed as a nice-to-have, not required for v1.
 - Tolerance values for duration mismatch (±10%/±30s suggested, not finalized).
-- TMDB API key handling — planned as an environment variable (`TMDB_API_KEY`), free v3 auth key from themoviedb.org.
+- ~~TMDB API key handling~~ — **decided**: `TMDB_API_KEY` env var accepts either the legacy v3 API key (sent as `api_key` query param) or the v4 "API Read Access Token" (a JWT, sent as a Bearer header); detected by format (JWTs start with `eyJ`).
 - Whether resolve/validate/apply should be separate subcommands (current plan) or a single pipeline with flags to stop at each stage.
 
 ## Context on Brian (for continuity)
