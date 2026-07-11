@@ -82,19 +82,60 @@ pub fn resolve(rows: &[ManifestRow], tmdb: &Tmdb) -> Result<Vec<RenamePlan>> {
 }
 
 pub fn write(plans: &[RenamePlan], path: &Path) -> Result<()> {
-    let mut wtr = csv::WriterBuilder::new()
-        .delimiter(b'\t')
-        .from_path(path)
-        .with_context(|| format!("could not write {}", path.display()))?;
+    let mut out = String::new();
     for plan in plans {
         let duration = plan
             .expected_duration_secs
             .map(|d| d.to_string())
             .unwrap_or_default();
-        wtr.write_record([&plan.old, &plan.new, &duration])?;
+        out.push_str(&format!("{}\t{}\t{}\n", plan.old, plan.new, duration));
     }
-    wtr.flush()?;
-    Ok(())
+    std::fs::write(path, out).with_context(|| format!("could not write {}", path.display()))
+}
+
+/// A plan row together with the line it came from in `renames.txt`,
+/// so validation messages can point back at the file.
+#[derive(Debug, Clone)]
+pub struct PlanEntry {
+    pub line: u64,
+    pub plan: RenamePlan,
+}
+
+pub fn read(path: &Path) -> Result<Vec<PlanEntry>> {
+    let file = std::fs::File::open(path)
+        .with_context(|| format!("could not open plan {}", path.display()))?;
+    read_reader(file).with_context(|| format!("in plan {}", path.display()))
+}
+
+fn read_reader<R: std::io::Read>(reader: R) -> Result<Vec<PlanEntry>> {
+    let mut entries = Vec::new();
+    for (line, fields) in crate::manifest::tsv_lines(reader)? {
+        let old = match fields.first().filter(|s| !s.trim().is_empty()) {
+            Some(s) => s.to_string(),
+            None => anyhow::bail!("plan line {line}: missing old path"),
+        };
+        let new = match fields.get(1).filter(|s| !s.trim().is_empty()) {
+            Some(s) => s.to_string(),
+            None => anyhow::bail!("plan line {line}: missing new path"),
+        };
+        let expected_duration_secs = match fields.get(2).map(|s| s.trim()).filter(|s| !s.is_empty())
+        {
+            Some(s) => Some(s.parse().with_context(|| {
+                format!("plan line {line}: invalid expected_duration_secs '{s}'")
+            })?),
+            None => None,
+        };
+
+        entries.push(PlanEntry {
+            line,
+            plan: RenamePlan {
+                old,
+                new,
+                expected_duration_secs,
+            },
+        });
+    }
+    Ok(entries)
 }
 
 /// `Series (Year)/Season SS/Series - sSSeEE - Episode Title.ext`
@@ -176,6 +217,27 @@ mod tests {
     fn sanitize_strips_illegal_chars() {
         assert_eq!(sanitize("What / Why: A \"Story\"?"), "What  Why A Story");
         assert_eq!(sanitize("Airplane!"), "Airplane!");
+    }
+
+    #[test]
+    fn read_parses_plan_rows() {
+        let plan = "# comment\n\
+                    a.mkv\tA (2020)/A.mkv\t600\n\
+                    b.mkv\tB (1999)/B.mkv\t\n\
+                    c.mkv\tC (2001)/C.mkv\n";
+        let entries = read_reader(plan.as_bytes()).unwrap();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].line, 2);
+        assert_eq!(entries[0].plan.old, "a.mkv");
+        assert_eq!(entries[0].plan.expected_duration_secs, Some(600));
+        assert_eq!(entries[1].plan.expected_duration_secs, None);
+        assert_eq!(entries[2].plan.expected_duration_secs, None);
+    }
+
+    #[test]
+    fn read_rejects_missing_target() {
+        let err = read_reader("only_one_column.mkv\n".as_bytes()).unwrap_err();
+        assert!(format!("{err:#}").contains("missing new path"));
     }
 
     #[test]

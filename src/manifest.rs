@@ -1,6 +1,6 @@
 //! Parsing of the TMDB-based manifest: one tab-separated row per ripped file.
 
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
@@ -33,43 +33,49 @@ pub fn parse(path: &Path) -> Result<Vec<ManifestRow>> {
 }
 
 pub fn parse_reader<R: Read>(reader: R) -> Result<Vec<ManifestRow>> {
-    let mut rdr = csv::ReaderBuilder::new()
-        .delimiter(b'\t')
-        .has_headers(false)
-        .flexible(true)
-        .comment(Some(b'#'))
-        .from_reader(reader);
-
     let mut rows = Vec::new();
-    for record in rdr.records() {
-        let record = record?;
-        let line = record.position().map_or(0, |p| p.line());
-        if record.iter().all(|f| f.trim().is_empty()) {
-            continue;
-        }
-        rows.push(parse_record(&record).with_context(|| format!("manifest line {line}"))?);
+    for (line, fields) in tsv_lines(reader)? {
+        rows.push(parse_record(&fields).with_context(|| format!("manifest line {line}"))?);
     }
     Ok(rows)
 }
 
-fn parse_record(record: &csv::StringRecord) -> Result<ManifestRow> {
-    let source = field(record, 0, "source")?.to_string();
-    let kind = field(record, 1, "kind")?;
+/// Splits input into (line number, tab-separated fields), skipping blank
+/// lines and `#` comments. Shared by the manifest and plan readers; line
+/// numbers are 1-based positions in the file, comments included.
+pub fn tsv_lines<R: Read>(reader: R) -> Result<Vec<(u64, Vec<String>)>> {
+    let mut lines = Vec::new();
+    for (idx, line) in BufReader::new(reader).lines().enumerate() {
+        let line = line.context("could not read line")?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let fields = line.split('\t').map(str::to_string).collect();
+        lines.push((idx as u64 + 1, fields));
+    }
+    Ok(lines)
+}
+
+fn parse_record(fields: &[String]) -> Result<ManifestRow> {
+    let source = field(fields, 0, "source")?.to_string();
+    let kind = field(fields, 1, "kind")?;
 
     match kind {
         "tv" => Ok(ManifestRow::Tv {
             source,
-            series_id: parse_field(record, 2, "tmdb_series_id")?,
-            season: parse_field(record, 3, "season")?,
-            episode: parse_field(record, 4, "episode")?,
+            series_id: parse_field(fields, 2, "tmdb_series_id")?,
+            season: parse_field(fields, 3, "season")?,
+            episode: parse_field(fields, 4, "episode")?,
         }),
         "movie" => Ok(ManifestRow::Movie {
             source,
-            movie_id: parse_field(record, 2, "tmdb_movie_id")?,
+            movie_id: parse_field(fields, 2, "tmdb_movie_id")?,
         }),
         "manual" => {
-            let new_name = field(record, 2, "new_name")?.to_string();
-            let expected_duration = match record.get(3).map(str::trim).filter(|s| !s.is_empty()) {
+            let new_name = field(fields, 2, "new_name")?.to_string();
+            let expected_duration = match fields.get(3).map(|s| s.trim()).filter(|s| !s.is_empty())
+            {
                 Some(s) => Some(
                     s.parse()
                         .with_context(|| format!("invalid expected_duration_secs '{s}'"))?,
@@ -86,19 +92,19 @@ fn parse_record(record: &csv::StringRecord) -> Result<ManifestRow> {
     }
 }
 
-fn field<'r>(record: &'r csv::StringRecord, idx: usize, name: &str) -> Result<&'r str> {
-    match record.get(idx).map(str::trim) {
+fn field<'r>(fields: &'r [String], idx: usize, name: &str) -> Result<&'r str> {
+    match fields.get(idx).map(|s| s.trim()) {
         Some(s) if !s.is_empty() => Ok(s),
         _ => bail!("missing {name} column"),
     }
 }
 
-fn parse_field<T>(record: &csv::StringRecord, idx: usize, name: &str) -> Result<T>
+fn parse_field<T>(fields: &[String], idx: usize, name: &str) -> Result<T>
 where
     T: std::str::FromStr,
     T::Err: std::error::Error + Send + Sync + 'static,
 {
-    let s = field(record, idx, name)?;
+    let s = field(fields, idx, name)?;
     s.parse().with_context(|| format!("invalid {name} '{s}'"))
 }
 

@@ -145,11 +145,12 @@ Run before any renames happen. Should catch:
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-csv = "1"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 strsim = "0.11"       # for fuzzy title matching later (not yet implemented)
 ```
+
+(The `csv` crate was originally suggested but dropped: it doesn't count `#` comment lines when reporting record positions, so error line numbers were wrong for hand-edited files. Plain per-line tab-splitting is simpler and has no quoting semantics to surprise filenames containing quotes.)
 
 ### Suggested module layout
 

@@ -4,7 +4,7 @@ mod rename_plan;
 mod tmdb;
 mod validate;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -58,7 +58,20 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Validate { plan } => {
-            anyhow::bail!("validate {}: not yet implemented", plan.display())
+            let entries = rename_plan::read(&plan)?;
+            let issues = validate::validate(&entries, Path::new("."));
+            for issue in &issues {
+                println!("{issue}");
+            }
+            let errors = issues
+                .iter()
+                .filter(|i| i.severity == validate::Severity::Error)
+                .count();
+            if errors > 0 {
+                anyhow::bail!("{errors} error(s) found — fix the plan before applying");
+            }
+            println!("plan OK: {} rename(s), all checks passed", entries.len());
+            Ok(())
         }
         Command::Apply { plan } => {
             anyhow::bail!("apply {}: not yet implemented", plan.display())
