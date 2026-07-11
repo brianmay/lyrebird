@@ -38,6 +38,8 @@
 
           meta = {
             description = "Identify and rename HandBrake video rips using TMDB metadata";
+            homepage = "https://github.com/brianmay/lyrebird";
+            license = pkgs.lib.licenses.agpl3Plus;
             mainProgram = "lyrebird";
           };
         };

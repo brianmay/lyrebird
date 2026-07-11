@@ -3,7 +3,8 @@ name = "lyrebird"
 version = "0.1.0"
 edition = "2021"
 description = "Identify and rename HandBrake video rips using TMDB metadata"
-license = "MIT"
+repository = "https://github.com/brianmay/lyrebird"
+license = "AGPL-3.0-or-later"
 
 [dependencies]
 reqwest = { version = "0.12", features = ["blocking", "json"] }
