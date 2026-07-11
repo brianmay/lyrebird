@@ -138,6 +138,32 @@ fn read_reader<R: std::io::Read>(reader: R) -> Result<Vec<PlanEntry>> {
     Ok(entries)
 }
 
+/// Executes the renames. Callers must have validated first; this only keeps
+/// the last-moment safety net (a target appearing between validation and the
+/// rename would otherwise be silently overwritten by `fs::rename`).
+pub fn apply(entries: &[PlanEntry], root: &Path) -> Result<()> {
+    for entry in entries {
+        let plan = &entry.plan;
+        let source = root.join(&plan.old);
+        let target = root.join(&plan.new);
+
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("could not create directory {}", parent.display()))?;
+        }
+        if target.exists() {
+            anyhow::bail!(
+                "target '{}' appeared since validation — aborting before overwriting it",
+                plan.new
+            );
+        }
+        std::fs::rename(&source, &target)
+            .with_context(|| format!("could not rename '{}' to '{}'", plan.old, plan.new))?;
+        println!("renamed: {} -> {}", plan.old, plan.new);
+    }
+    Ok(())
+}
+
 /// `Series (Year)/Season SS/Series - sSSeEE - Episode Title.ext`
 /// (year in the series folder only, not the filename).
 fn tv_path(
@@ -232,6 +258,51 @@ mod tests {
         assert_eq!(entries[0].plan.expected_duration_secs, Some(600));
         assert_eq!(entries[1].plan.expected_duration_secs, None);
         assert_eq!(entries[2].plan.expected_duration_secs, None);
+    }
+
+    #[test]
+    fn apply_renames_and_creates_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("title 01.mkv"), b"video").unwrap();
+
+        let entries = [PlanEntry {
+            line: 1,
+            plan: RenamePlan {
+                old: "title 01.mkv".to_string(),
+                new: "Show (2020)/Season 01/Show - s01e01 - Pilot.mkv".to_string(),
+                expected_duration_secs: None,
+            },
+        }];
+        apply(&entries, dir.path()).unwrap();
+
+        assert!(!dir.path().join("title 01.mkv").exists());
+        let target = dir
+            .path()
+            .join("Show (2020)/Season 01/Show - s01e01 - Pilot.mkv");
+        assert_eq!(std::fs::read(target).unwrap(), b"video");
+    }
+
+    #[test]
+    fn apply_refuses_to_overwrite() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.mkv"), b"source").unwrap();
+        std::fs::write(dir.path().join("taken.mkv"), b"precious").unwrap();
+
+        let entries = [PlanEntry {
+            line: 1,
+            plan: RenamePlan {
+                old: "a.mkv".to_string(),
+                new: "taken.mkv".to_string(),
+                expected_duration_secs: None,
+            },
+        }];
+        let err = apply(&entries, dir.path()).unwrap_err();
+        assert!(format!("{err:#}").contains("appeared since validation"));
+        assert_eq!(std::fs::read(dir.path().join("a.mkv")).unwrap(), b"source");
+        assert_eq!(
+            std::fs::read(dir.path().join("taken.mkv")).unwrap(),
+            b"precious"
+        );
     }
 
     #[test]

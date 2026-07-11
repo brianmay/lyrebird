@@ -193,7 +193,7 @@ lyrebird apply    renames.txt                          # Stage 4: execute mv, on
 lyrebird sheet    *.mkv                                # Stage 0 (maybe): generate contact sheet PNGs
 ```
 
-`resolve` and `validate` could also be combined into a single `plan` command that resolves then immediately validates, with `apply` requiring an explicit `--force` or a prior successful validate run — undecided, worth deciding early.
+**Decided**: the three stay separate subcommands, and `apply` re-runs the full validation itself every time, refusing on any error — no `--force`, no reliance on a prior (possibly stale) validate run. `validate` remains useful standalone for iterating on a plan. `apply` also keeps a last-moment no-clobber check per rename, since `fs::rename` would otherwise silently overwrite a target that appeared after validation.
 
 ## Open questions / not yet decided
 

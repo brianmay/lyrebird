@@ -58,23 +58,33 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Validate { plan } => {
-            let entries = rename_plan::read(&plan)?;
-            let issues = validate::validate(&entries, Path::new("."));
-            for issue in &issues {
-                println!("{issue}");
-            }
-            let errors = issues
-                .iter()
-                .filter(|i| i.severity == validate::Severity::Error)
-                .count();
-            if errors > 0 {
-                anyhow::bail!("{errors} error(s) found — fix the plan before applying");
-            }
+            let entries = load_validated(&plan)?;
             println!("plan OK: {} rename(s), all checks passed", entries.len());
             Ok(())
         }
         Command::Apply { plan } => {
-            anyhow::bail!("apply {}: not yet implemented", plan.display())
+            // Apply always re-validates: a plan edited or a directory changed
+            // since the last `validate` run must not slip through.
+            let entries = load_validated(&plan)?;
+            rename_plan::apply(&entries, Path::new("."))?;
+            println!("applied {} rename(s)", entries.len());
+            Ok(())
         }
     }
+}
+
+fn load_validated(plan: &Path) -> Result<Vec<rename_plan::PlanEntry>> {
+    let entries = rename_plan::read(plan)?;
+    let issues = validate::validate(&entries, Path::new("."));
+    for issue in &issues {
+        println!("{issue}");
+    }
+    let errors = issues
+        .iter()
+        .filter(|i| i.severity == validate::Severity::Error)
+        .count();
+    if errors > 0 {
+        anyhow::bail!("{errors} error(s) found — fix the plan before applying");
+    }
+    Ok(entries)
 }
