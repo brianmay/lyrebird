@@ -16,10 +16,15 @@ pub enum ManifestRow {
         /// Set when the rip contains a run of episodes (`3-4` in the episode
         /// column): the inclusive end of the range.
         episode_end: Option<u32>,
+        /// Title the user expects (typed from the disc/box); resolve warns if
+        /// TMDB's title is wildly different — catches wrong IDs and
+        /// disc-vs-broadcast ordering that the duration check can't.
+        expected_title: Option<String>,
     },
     Movie {
         source: String,
         movie_id: u32,
+        expected_title: Option<String>,
     },
     /// Content not on TMDB (specials, extras) — target path supplied directly.
     Manual {
@@ -73,11 +78,13 @@ fn parse_record(fields: &[String]) -> Result<ManifestRow> {
                 season: parse_field(fields, 3, "season")?,
                 episode,
                 episode_end,
+                expected_title: optional_field(fields, 5),
             })
         }
         "movie" => Ok(ManifestRow::Movie {
             source,
             movie_id: parse_field(fields, 2, "tmdb_movie_id")?,
+            expected_title: optional_field(fields, 3),
         }),
         "manual" => {
             let new_name = field(fields, 2, "new_name")?.to_string();
@@ -120,6 +127,14 @@ fn parse_episode_range(s: &str) -> Result<(u32, Option<u32>)> {
     Ok((start, Some(end)))
 }
 
+fn optional_field(fields: &[String], idx: usize) -> Option<String> {
+    fields
+        .get(idx)
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
 fn field<'r>(fields: &'r [String], idx: usize, name: &str) -> Result<&'r str> {
     match fields.get(idx).map(|s| s.trim()) {
         Some(s) if !s.is_empty() => Ok(s),
@@ -158,10 +173,12 @@ mod tests {
                 season,
                 episode,
                 episode_end,
+                expected_title,
             } => {
                 assert_eq!(source, "title_01.mkv");
                 assert_eq!((*series_id, *season, *episode), (84958, 1, 1));
                 assert_eq!(*episode_end, None);
+                assert_eq!(*expected_title, None);
             }
             other => panic!("expected tv row, got {other:?}"),
         }
@@ -183,6 +200,25 @@ mod tests {
         }
         match &rows[3] {
             ManifestRow::Movie { movie_id, .. } => assert_eq!(*movie_id, 603),
+            other => panic!("expected movie row, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_expected_titles() {
+        let manifest = "a.mkv\ttv\t84958\t1\t2\tWitches Before Wizards\n\
+                        b.mkv\tmovie\t603\tThe Matrix\n";
+        let rows = parse_reader(manifest.as_bytes()).unwrap();
+        match &rows[0] {
+            ManifestRow::Tv { expected_title, .. } => {
+                assert_eq!(expected_title.as_deref(), Some("Witches Before Wizards"));
+            }
+            other => panic!("expected tv row, got {other:?}"),
+        }
+        match &rows[1] {
+            ManifestRow::Movie { expected_title, .. } => {
+                assert_eq!(expected_title.as_deref(), Some("The Matrix"));
+            }
             other => panic!("expected movie row, got {other:?}"),
         }
     }

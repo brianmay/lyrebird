@@ -30,6 +30,7 @@ pub fn resolve(rows: &[ManifestRow], tmdb: &Tmdb) -> Result<Vec<RenamePlan>> {
                 season,
                 episode,
                 episode_end,
+                expected_title,
             } => {
                 let series = match series_cache.get(series_id) {
                     Some(series) => series.clone(),
@@ -63,6 +64,21 @@ pub fn resolve(rows: &[ManifestRow], tmdb: &Tmdb) -> Result<Vec<RenamePlan>> {
                     .map(|ep| ep.runtime.map(|mins| mins * 60))
                     .sum::<Option<u64>>();
 
+                if let Some(expected) = expected_title {
+                    // For a range, matching any single episode's title is
+                    // enough — the user likely typed just the first one.
+                    let mut candidates: Vec<&str> =
+                        episodes.iter().map(|ep| ep.name.as_str()).collect();
+                    candidates.push(&title);
+                    if let Some(score) = title_mismatch(expected, &candidates) {
+                        eprintln!(
+                            "WARNING {source}: expected title '{expected}' but TMDB returned \
+                             '{title}' (similarity {score:.2}) — check the series/season/episode \
+                             numbers"
+                        );
+                    }
+                }
+
                 RenamePlan {
                     old: source.clone(),
                     new: tv_path(
@@ -77,10 +93,23 @@ pub fn resolve(rows: &[ManifestRow], tmdb: &Tmdb) -> Result<Vec<RenamePlan>> {
                     expected_duration_secs: runtime_secs,
                 }
             }
-            ManifestRow::Movie { source, movie_id } => {
+            ManifestRow::Movie {
+                source,
+                movie_id,
+                expected_title,
+            } => {
                 let movie = tmdb
                     .movie(*movie_id)
                     .with_context(|| format!("{source}: looking up TMDB movie {movie_id}"))?;
+                if let Some(expected) = expected_title {
+                    if let Some(score) = title_mismatch(expected, &[&movie.title]) {
+                        eprintln!(
+                            "WARNING {source}: expected title '{expected}' but TMDB returned \
+                             '{}' (similarity {score:.2}) — check the movie id",
+                            movie.title
+                        );
+                    }
+                }
                 RenamePlan {
                     old: source.clone(),
                     new: movie_path(&movie.title, movie.release_year(), extension_of(source)),
@@ -259,6 +288,23 @@ fn with_year(name: &str, year: Option<&str>) -> String {
     }
 }
 
+/// Hand-typed titles never exactly match TMDB's (punctuation, "&" vs "and",
+/// typos), so exact comparison would warn on every row. Below this
+/// Jaro-Winkler similarity, though, the titles are probably different
+/// episodes/films rather than different spellings.
+const TITLE_SIMILARITY_THRESHOLD: f64 = 0.7;
+
+/// Some(best score) when even the closest candidate falls below the
+/// threshold — i.e. a probable misidentification.
+fn title_mismatch(expected: &str, candidates: &[&str]) -> Option<f64> {
+    let expected = expected.to_lowercase();
+    let best = candidates
+        .iter()
+        .map(|candidate| strsim::jaro_winkler(&expected, &candidate.to_lowercase()))
+        .fold(0.0_f64, f64::max);
+    (best < TITLE_SIMILARITY_THRESHOLD).then_some(best)
+}
+
 /// Strip characters that are illegal or troublesome in filenames.
 fn sanitize(name: &str) -> String {
     name.chars()
@@ -325,6 +371,24 @@ mod tests {
             movie_path("Airplane!", Some("1980"), "mkv"),
             "Airplane! (1980)/Airplane! (1980).mkv"
         );
+    }
+
+    #[test]
+    fn title_mismatch_tolerates_spelling_but_catches_wrong_episodes() {
+        // Case and small punctuation differences pass.
+        assert_eq!(
+            title_mismatch("witches before wizards", &["Witches Before Wizards"]),
+            None
+        );
+        assert_eq!(title_mismatch("Part 1", &["Part One"]), None);
+        // A range matches if any single episode's title matches.
+        assert_eq!(
+            title_mismatch("Part One", &["Part One", "Part Two", "Part One & Part Two"]),
+            None
+        );
+        // A genuinely different title is flagged.
+        let score = title_mismatch("Witches Before Wizards", &["I Was a Teenage Abomination"]);
+        assert!(score.is_some_and(|s| s < TITLE_SIMILARITY_THRESHOLD));
     }
 
     #[test]

@@ -69,8 +69,8 @@ movie_rip.mkv	movie	603
 
 | Kind | Columns after `source` | Behavior |
 |---|---|---|
-| `tv` | `tmdb_series_id`, `season`, `episode` | Look up series name + first-air year + episode title + runtime from TMDB. Build relative path `Series (Year)/Season SS/Series - sSSeEE - Episode Title.mkv` (see Output naming convention). The `episode` column also accepts a range `3-4` for a rip containing several episodes: filename gets `sSSe03-e04`, episode titles join with " & ", expected duration is the sum of the episode runtimes. |
-| `movie` | `tmdb_movie_id` | Look up movie title + year + runtime from TMDB. Build relative path `Title (Year)/Title (Year).mkv`. |
+| `tv` | `tmdb_series_id`, `season`, `episode` | Look up series name + first-air year + episode title + runtime from TMDB. Build relative path `Series (Year)/Season SS/Series - sSSeEE - Episode Title.mkv` (see Output naming convention). The `episode` column also accepts a range `3-4` for a rip containing several episodes: filename gets `sSSe03-e04`, episode titles join with " & ", expected duration is the sum of the episode runtimes. Optional trailing column `expected_title`: the title the user expects (typed from the disc/box); resolve warns if TMDB's title has Jaro-Winkler similarity < 0.7 (case-insensitive; for a range, matching any one episode's title suffices). |
+| `movie` | `tmdb_movie_id` | Look up movie title + year + runtime from TMDB. Build relative path `Title (Year)/Title (Year).mkv`. Optional trailing `expected_title` column, same fuzzy check as `tv`. |
 | `manual` | `new_name`, `expected_duration_secs` (optional) | Not on TMDB (specials/extras). Target path supplied directly, duration optional. |
 
 Comment lines start with `#` and should be skipped.
@@ -200,7 +200,7 @@ lyrebird sheet    *.mkv                                # Stage 0 (maybe): genera
 - ~~Exact output filename convention~~ — **decided**, see "Output naming convention" above.
 - How `apply` locates the library root (`/minion/media/tv` vs `/minion/media/movies`) — run from within the root, or `--dest-root` flag.
 - ~~Whether `lyrebird sheet` should live inside the Rust binary~~ — **decided**: folded in as a subcommand shelling out to ffmpeg. It samples exactly 16 frames spread evenly across the runtime (via the `fps` filter driven by the ffprobe duration) rather than the prototype's fixed frame-number interval, so no per-file tuning is needed.
-- Whether to add the fuzzy title-similarity cross-check (manifest supplies expected title, compare against TMDB's actual title via `strsim`) — discussed as a nice-to-have, not required for v1.
+- ~~Whether to add the fuzzy title-similarity cross-check~~ — **implemented**: optional trailing `expected_title` column on `tv`/`movie` rows; resolve warns (stderr, does not fail) when the best case-insensitive Jaro-Winkler similarity against TMDB's title(s) is below 0.7. Catches wrong IDs and disc-vs-broadcast episode ordering, which the duration check can't when episodes are all the same length.
 - Tolerance values for duration mismatch (±10%/±30s suggested, not finalized).
 - ~~TMDB API key handling~~ — **decided**: `TMDB_API_KEY` env var accepts either the legacy v3 API key (sent as `api_key` query param) or the v4 "API Read Access Token" (a JWT, sent as a Bearer header); detected by format (JWTs start with `eyJ`).
 - Whether resolve/validate/apply should be separate subcommands (current plan) or a single pipeline with flags to stop at each stage.
