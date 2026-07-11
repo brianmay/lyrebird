@@ -19,6 +19,8 @@ $ lyrebird apply renames.txt           # re-validates, then executes the renames
 
 `resolve` needs a TMDB credential in the `TMDB_API_KEY` environment variable — either the legacy v3 API key or the v4 "API Read Access Token" works (detected by format; both are free from themoviedb.org).
 
+Optionally, set `LYREBIRD_TV_ROOT` and/or `LYREBIRD_MOVIE_ROOT` (e.g. `/media/tv`, `/media/movies`) and resolve will produce absolute targets under the matching root — TV rows and extras under the TV root, movie rows and extras under the movie root. Left unset, targets are relative and you run `apply` from inside the library root. `manual` targets are always used exactly as written.
+
 ## The manifest
 
 One row per ripped file, columns separated by `|` (surrounding spaces are ignored, so you can align columns however you like; rows containing a tab are read as tab-separated for compatibility with older files). The first line must be the `#lyrebird:manifest` marker (`lyrebird template` writes it). The row kind determines the remaining columns:

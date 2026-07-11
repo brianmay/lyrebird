@@ -137,15 +137,11 @@ fn allowed_tolerance_secs(expected: f64) -> f64 {
 fn target_path_issues(new: &str) -> Vec<(Severity, String)> {
     let mut issues = Vec::new();
 
-    if new.starts_with('/') {
-        issues.push((
-            Severity::Error,
-            format!("target '{new}' is an absolute path (targets must be library-relative)"),
-        ));
-        return issues;
-    }
+    // Absolute targets are legitimate: resolve produces them when
+    // LYREBIRD_TV_ROOT / LYREBIRD_MOVIE_ROOT are set.
+    let relative = new.strip_prefix('/').unwrap_or(new);
 
-    for component in new.split('/') {
+    for component in relative.split('/') {
         if component.trim().is_empty() {
             issues.push((
                 Severity::Error,
@@ -248,7 +244,7 @@ mod tests {
 
     #[test]
     fn checks_target_path_shape() {
-        let error_targets = ["/abs/path.mkv", "a//b.mkv", "../up.mkv", "./here.mkv"];
+        let error_targets = ["a//b.mkv", "../up.mkv", "./here.mkv", "/media//tv/x.mkv"];
         for target in error_targets {
             assert!(
                 target_path_issues(target)
@@ -269,5 +265,7 @@ mod tests {
 
         assert!(target_path_issues("Show (2020)/Season 01/Show - s01e01 - Pilot.mkv").is_empty());
         assert!(target_path_issues("Movie (1980)/Movie (1980).MP4").is_empty());
+        // Absolute targets come from LYREBIRD_TV_ROOT / LYREBIRD_MOVIE_ROOT.
+        assert!(target_path_issues("/media/tv/Show (2020)/Season 01/Ep.mkv").is_empty());
     }
 }

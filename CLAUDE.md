@@ -92,7 +92,7 @@ Consequences for the design:
 
 - **Targets are relative paths, not bare filenames.** `RenamePlan.new` holds e.g. `The Owl House (2020)/Season 01/....mkv`. `apply` must create parent directories (`fs::create_dir_all`) before renaming.
 - **Validation changes**: path separators between the folder/season/filename components are expected, so the "contains path separators" check applies per-component instead (no empty components, no illegal filename chars, no `..`).
-- **Library roots differ by type** (`/minion/media/tv` vs `/minion/media/movies`). Not yet decided how apply targets the root: run `apply` from within the correct root, or a `--dest-root` flag. For v1, running from the destination root is fine.
+- **Library roots differ by type** (`/minion/media/tv` vs `/minion/media/movies`) — **decided**: optional `LYREBIRD_TV_ROOT` / `LYREBIRD_MOVIE_ROOT` env vars, applied at *resolve* time so the plan file shows the real absolute destinations (tv/tv-extra rows under the TV root, movie/movie-extra under the movie root; `manual` targets never prefixed). Unset → targets stay relative and `apply` runs from inside the library root. Validate accordingly allows absolute targets (still rejects `..`/empty components).
 - **Spaces (and `!` etc.) in names are a non-issue in Rust** — `std::fs::rename` takes paths directly, no shell involved. Only the bash prototypes needed quoting care.
 - **Multi-episode files** — **implemented**: the manifest `tv` episode column accepts `3-4` (inclusive, same season, end > start). Output uses `sSSe03-e04` — Jellyfin's documented multi-episode form — rather than the literal Rename My TV expansion (`e03-04`); a one-line format change in `tv_path` if the other form turns out to be wanted. Titles join with " & "; expected duration is the sum of episode runtimes (unknown if any episode's runtime is missing).
 
@@ -206,7 +206,7 @@ lyrebird apply    renames.txt                    # Stage 4: re-validate then exe
 ## Open questions / not yet decided
 
 - ~~Exact output filename convention~~ — **decided**, see "Output naming convention" above.
-- How `apply` locates the library root (`/minion/media/tv` vs `/minion/media/movies`) — run from within the root, or `--dest-root` flag.
+- ~~How `apply` locates the library root~~ — **decided**: `LYREBIRD_TV_ROOT` / `LYREBIRD_MOVIE_ROOT` env vars at resolve time (see Output naming convention).
 - ~~Whether `lyrebird sheet` should live inside the Rust binary~~ — **decided**: folded in as a subcommand shelling out to ffmpeg. It samples exactly 16 frames spread evenly across the runtime (via the `fps` filter driven by the ffprobe duration) rather than the prototype's fixed frame-number interval, so no per-file tuning is needed.
 - ~~Whether to add the fuzzy title-similarity cross-check~~ — **implemented**: optional trailing `expected_title` column on `tv`/`movie` rows; resolve warns (stderr, does not fail) when the best case-insensitive Jaro-Winkler similarity against TMDB's title(s) is below 0.7. Catches wrong IDs and disc-vs-broadcast episode ordering, which the duration check can't when episodes are all the same length.
 - Tolerance values for duration mismatch (±10%/±30s suggested, not finalized).

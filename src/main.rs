@@ -65,7 +65,7 @@ fn main() -> Result<()> {
         Command::Resolve { manifest, output } => {
             let rows = manifest::parse(&manifest)?;
             let tmdb = tmdb::Tmdb::from_env()?;
-            let plans = rename_plan::resolve(&rows, &tmdb)?;
+            let plans = rename_plan::resolve(&rows, &tmdb, &rename_plan::Roots::from_env())?;
             for plan in &plans {
                 println!("{} -> {}", plan.old, plan.new);
             }

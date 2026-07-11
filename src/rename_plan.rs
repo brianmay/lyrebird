@@ -18,6 +18,39 @@ pub struct RenamePlan {
     pub expected_duration_secs: Option<u64>,
 }
 
+/// Library roots prepended to resolved targets, read from the
+/// LYREBIRD_TV_ROOT and LYREBIRD_MOVIE_ROOT environment variables. Unset
+/// means targets stay relative and apply is run from inside the library
+/// root. Manual rows are never prefixed — their target is taken as given.
+#[derive(Debug, Default)]
+pub struct Roots {
+    pub tv: Option<String>,
+    pub movie: Option<String>,
+}
+
+impl Roots {
+    pub fn from_env() -> Self {
+        Roots {
+            tv: std::env::var("LYREBIRD_TV_ROOT").ok().and_then(clean_root),
+            movie: std::env::var("LYREBIRD_MOVIE_ROOT")
+                .ok()
+                .and_then(clean_root),
+        }
+    }
+}
+
+fn clean_root(value: String) -> Option<String> {
+    let value = value.trim().trim_end_matches('/');
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+fn under(root: &Option<String>, path: String) -> String {
+    match root {
+        Some(root) => format!("{root}/{path}"),
+        None => path,
+    }
+}
+
 fn lookup_series(
     cache: &mut HashMap<u32, crate::tmdb::Series>,
     tmdb: &Tmdb,
@@ -50,7 +83,7 @@ fn lookup_movie(
     Ok(movie)
 }
 
-pub fn resolve(rows: &[ManifestRow], tmdb: &Tmdb) -> Result<Vec<RenamePlan>> {
+pub fn resolve(rows: &[ManifestRow], tmdb: &Tmdb, roots: &Roots) -> Result<Vec<RenamePlan>> {
     let mut series_cache: HashMap<u32, crate::tmdb::Series> = HashMap::new();
     let mut movie_cache: HashMap<u32, crate::tmdb::Movie> = HashMap::new();
     let mut plans = Vec::with_capacity(rows.len());
@@ -105,14 +138,17 @@ pub fn resolve(rows: &[ManifestRow], tmdb: &Tmdb) -> Result<Vec<RenamePlan>> {
 
                 RenamePlan {
                     old: source.clone(),
-                    new: tv_path(
-                        &series.name,
-                        series.first_air_year(),
-                        *season,
-                        *episode,
-                        *episode_end,
-                        &title,
-                        extension_of(source),
+                    new: under(
+                        &roots.tv,
+                        tv_path(
+                            &series.name,
+                            series.first_air_year(),
+                            *season,
+                            *episode,
+                            *episode_end,
+                            &title,
+                            extension_of(source),
+                        ),
                     ),
                     expected_duration_secs: runtime_secs,
                 }
@@ -134,7 +170,10 @@ pub fn resolve(rows: &[ManifestRow], tmdb: &Tmdb) -> Result<Vec<RenamePlan>> {
                 }
                 RenamePlan {
                     old: source.clone(),
-                    new: movie_path(&movie.title, movie.release_year(), extension_of(source)),
+                    new: under(
+                        &roots.movie,
+                        movie_path(&movie.title, movie.release_year(), extension_of(source)),
+                    ),
                     expected_duration_secs: movie.runtime.map(|mins| mins * 60),
                 }
             }
@@ -148,12 +187,15 @@ pub fn resolve(rows: &[ManifestRow], tmdb: &Tmdb) -> Result<Vec<RenamePlan>> {
                 let movie = lookup_movie(&mut movie_cache, tmdb, *movie_id, source)?;
                 RenamePlan {
                     old: source.clone(),
-                    new: extra_path(
-                        &with_year(&sanitize(&movie.title), movie.release_year()),
-                        None,
-                        extra_type,
-                        name,
-                        extension_of(source),
+                    new: under(
+                        &roots.movie,
+                        extra_path(
+                            &with_year(&sanitize(&movie.title), movie.release_year()),
+                            None,
+                            extra_type,
+                            name,
+                            extension_of(source),
+                        ),
                     ),
                     expected_duration_secs: *expected_duration,
                 }
@@ -169,12 +211,15 @@ pub fn resolve(rows: &[ManifestRow], tmdb: &Tmdb) -> Result<Vec<RenamePlan>> {
                 let series = lookup_series(&mut series_cache, tmdb, *series_id, source)?;
                 RenamePlan {
                     old: source.clone(),
-                    new: extra_path(
-                        &with_year(&sanitize(&series.name), series.first_air_year()),
-                        *season,
-                        extra_type,
-                        name,
-                        extension_of(source),
+                    new: under(
+                        &roots.tv,
+                        extra_path(
+                            &with_year(&sanitize(&series.name), series.first_air_year()),
+                            *season,
+                            extra_type,
+                            name,
+                            extension_of(source),
+                        ),
                     ),
                     expected_duration_secs: *expected_duration,
                 }
@@ -453,6 +498,21 @@ mod tests {
             movie_path("Airplane!", Some("1980"), "mkv"),
             "Airplane! (1980)/Airplane! (1980).mkv"
         );
+    }
+
+    #[test]
+    fn roots_prefix_targets() {
+        assert_eq!(
+            under(&Some("/media/tv".to_string()), "A (2020)/a.mkv".to_string()),
+            "/media/tv/A (2020)/a.mkv"
+        );
+        assert_eq!(under(&None, "A (2020)/a.mkv".to_string()), "A (2020)/a.mkv");
+
+        assert_eq!(
+            clean_root("/media/tv/".to_string()),
+            Some("/media/tv".to_string())
+        );
+        assert_eq!(clean_root("  ".to_string()), None);
     }
 
     #[test]
