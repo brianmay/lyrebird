@@ -47,6 +47,15 @@ enum Command {
         #[arg(required = true)]
         files: Vec<PathBuf>,
     },
+    /// Write a manifest template for a set of files, ready to hand-edit
+    Template {
+        /// Video files to include, in episode order
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+        /// Where to write the template (refuses to overwrite)
+        #[arg(short, long, default_value = "manifest.txt")]
+        output: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
@@ -91,6 +100,16 @@ fn main() -> Result<()> {
             if failures > 0 {
                 anyhow::bail!("{failures} of {} sheet(s) failed", files.len());
             }
+            Ok(())
+        }
+        Command::Template { files, output } => {
+            manifest::template(&files, &output)?;
+            println!(
+                "wrote template for {} file(s) to {} — edit it, then run: lyrebird resolve {}",
+                files.len(),
+                output.display(),
+                output.display()
+            );
             Ok(())
         }
     }

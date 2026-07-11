@@ -184,13 +184,17 @@ pub struct RenamePlan {
 }
 ```
 
-## CLI shape (proposed, not yet implemented)
+## CLI shape (all implemented)
 
 ```bash
-lyrebird resolve  tmdb_manifest.txt  -o renames.txt   # Stage 2: TMDB lookups -> RenamePlan list
-lyrebird validate renames.txt                          # Stage 3: run all checks, exit non-zero on error
-lyrebird apply    renames.txt                          # Stage 4: execute mv, only if validation passes
-lyrebird sheet    *.mkv                                # Stage 0 (maybe): generate contact sheet PNGs
+lyrebird sheet    *.mkv                          # Stage 0: contact sheet PNGs (identification aid)
+lyrebird template *.mkv -o manifest.txt          # Stage 1: manifest template to hand-edit
+                                                 #   (refuses to overwrite; pre-filled tv rows with a
+                                                 #    SERIES_ID placeholder that cannot resolve unedited;
+                                                 #    per-file ffprobe duration as a comment)
+lyrebird resolve  manifest.txt -o renames.txt    # Stage 2: TMDB lookups -> RenamePlan list
+lyrebird validate renames.txt                    # Stage 3: run all checks, exit non-zero on error
+lyrebird apply    renames.txt                    # Stage 4: re-validate then execute the renames
 ```
 
 **Decided**: the three stay separate subcommands, and `apply` re-runs the full validation itself every time, refusing on any error — no `--force`, no reliance on a prior (possibly stale) validate run. `validate` remains useful standalone for iterating on a plan. `apply` also keeps a last-moment no-clobber check per rename, since `fs::rename` would otherwise silently overwrite a target that appeared after validation. When source and target are on different filesystems (`fs::rename` fails with EXDEV), `apply` falls back to copy-then-remove: copy to a `.lyrebird-partial` file in the target directory, verify the byte count, rename into place (same-filesystem, atomic), then delete the source — an interrupted copy can never leave a plausible-looking target or lose the source.

@@ -127,6 +127,60 @@ fn parse_episode_range(s: &str) -> Result<(u32, Option<u32>)> {
     Ok((start, Some(end)))
 }
 
+/// Writes a manifest template for `files`, ready to hand-edit and pass to
+/// `resolve`. Refuses to overwrite so it can never eat an edited manifest.
+pub fn template(files: &[std::path::PathBuf], output: &Path) -> Result<()> {
+    if output.exists() {
+        bail!(
+            "{} already exists — refusing to overwrite (delete it first if you really want a fresh template)",
+            output.display()
+        );
+    }
+
+    let files: Vec<(String, Option<f64>)> = files
+        .iter()
+        .map(|f| {
+            (
+                f.display().to_string(),
+                crate::ffprobe::duration_secs(f).ok(),
+            )
+        })
+        .collect();
+    std::fs::write(output, template_body(&files))
+        .with_context(|| format!("could not write {}", output.display()))
+}
+
+fn template_body(files: &[(String, Option<f64>)]) -> String {
+    let mut out = String::from(
+        "# lyrebird manifest — edit each line, then run: lyrebird resolve <this file>\n\
+         #\n\
+         # Row kinds (TAB-separated columns):\n\
+         #   <file>  tv      <tmdb_series_id>  <season>  <episode | ep1-ep2>  [expected title]\n\
+         #   <file>  movie   <tmdb_movie_id>  [expected title]\n\
+         #   <file>  manual  <new name>  [expected duration secs]\n\
+         #\n\
+         # Find TMDB ids at https://www.themoviedb.org — the number in the title's URL.\n\
+         # Rows are pre-filled as tv season 1 with episodes in file order; SERIES_ID\n\
+         # will not resolve until replaced.\n",
+    );
+
+    for (episode, (file, duration)) in files.iter().enumerate() {
+        let duration = match duration {
+            Some(secs) => format!(
+                "{}m{:02}s ({secs:.0}s)",
+                (secs / 60.0) as u64,
+                (secs % 60.0) as u64
+            ),
+            None => "unavailable".to_string(),
+        };
+        out.push_str(&format!(
+            "\n# duration: {duration}\n{file}\ttv\tSERIES_ID\t1\t{}\n",
+            episode + 1
+        ));
+    }
+    out
+}
+
 fn optional_field(fields: &[String], idx: usize) -> Option<String> {
     fields
         .get(idx)
@@ -246,6 +300,38 @@ mod tests {
 
         let err = parse_reader("x.mkv\ttv\t84958\t1\t3-3\n".as_bytes()).unwrap_err();
         assert!(format!("{err:#}").contains("end must be greater than start"));
+    }
+
+    #[test]
+    fn template_rows_roundtrip_through_the_parser() {
+        let body = template_body(&[
+            ("title_01.mkv".to_string(), Some(1471.4)),
+            ("title 02.mkv".to_string(), None),
+        ]);
+
+        assert!(body.contains("# duration: 24m31s (1471s)\ntitle_01.mkv\ttv\tSERIES_ID\t1\t1\n"));
+        assert!(body.contains("# duration: unavailable\ntitle 02.mkv\ttv\tSERIES_ID\t1\t2\n"));
+
+        // The pre-filled rows must parse once SERIES_ID is replaced...
+        let edited = body.replace("SERIES_ID", "84958");
+        assert_eq!(parse_reader(edited.as_bytes()).unwrap().len(), 2);
+        // ...and must NOT parse while the placeholder is still there.
+        let err = parse_reader(body.as_bytes()).unwrap_err();
+        assert!(format!("{err:#}").contains("invalid tmdb_series_id 'SERIES_ID'"));
+    }
+
+    #[test]
+    fn template_refuses_to_overwrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("manifest.txt");
+        std::fs::write(&output, "precious hand-edited manifest").unwrap();
+
+        let err = template(&["a.mkv".into()], &output).unwrap_err();
+        assert!(format!("{err:#}").contains("refusing to overwrite"));
+        assert_eq!(
+            std::fs::read_to_string(&output).unwrap(),
+            "precious hand-edited manifest"
+        );
     }
 
     #[test]
