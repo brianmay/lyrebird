@@ -199,7 +199,7 @@ lyrebird sheet    *.mkv                                # Stage 0 (maybe): genera
 
 - ~~Exact output filename convention~~ — **decided**, see "Output naming convention" above.
 - How `apply` locates the library root (`/minion/media/tv` vs `/minion/media/movies`) — run from within the root, or `--dest-root` flag.
-- Whether `lyrebird sheet` (contact sheet generation) should live inside the Rust binary (shelling out to `ffmpeg`) or stay a separate shell script — leaning toward folding it in for a single cohesive tool, but not decided.
+- ~~Whether `lyrebird sheet` should live inside the Rust binary~~ — **decided**: folded in as a subcommand shelling out to ffmpeg. It samples exactly 16 frames spread evenly across the runtime (via the `fps` filter driven by the ffprobe duration) rather than the prototype's fixed frame-number interval, so no per-file tuning is needed.
 - Whether to add the fuzzy title-similarity cross-check (manifest supplies expected title, compare against TMDB's actual title via `strsim`) — discussed as a nice-to-have, not required for v1.
 - Tolerance values for duration mismatch (±10%/±30s suggested, not finalized).
 - ~~TMDB API key handling~~ — **decided**: `TMDB_API_KEY` env var accepts either the legacy v3 API key (sent as `api_key` query param) or the v4 "API Read Access Token" (a JWT, sent as a Bearer header); detected by format (JWTs start with `eyJ`).

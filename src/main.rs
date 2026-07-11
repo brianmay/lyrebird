@@ -1,6 +1,7 @@
 mod ffprobe;
 mod manifest;
 mod rename_plan;
+mod sheet;
 mod tmdb;
 mod validate;
 
@@ -40,6 +41,12 @@ enum Command {
         /// Rename plan produced by `resolve`
         plan: PathBuf,
     },
+    /// Generate a contact-sheet PNG per video file (identification aid)
+    Sheet {
+        /// Video files to generate sheets for
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -68,6 +75,22 @@ fn main() -> Result<()> {
             let entries = load_validated(&plan)?;
             rename_plan::apply(&entries, Path::new("."))?;
             println!("applied {} rename(s)", entries.len());
+            Ok(())
+        }
+        Command::Sheet { files } => {
+            let mut failures = 0;
+            for file in &files {
+                match sheet::generate(file) {
+                    Ok(output) => println!("{} -> {}", file.display(), output.display()),
+                    Err(err) => {
+                        eprintln!("ERROR {}: {err:#}", file.display());
+                        failures += 1;
+                    }
+                }
+            }
+            if failures > 0 {
+                anyhow::bail!("{failures} of {} sheet(s) failed", files.len());
+            }
             Ok(())
         }
     }
