@@ -10,12 +10,20 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-      in
-      {
-        packages.default = pkgs.rustPlatform.buildRustPackage {
+
+        lyrebird = pkgs.rustPlatform.buildRustPackage {
           pname = "lyrebird";
           version = "0.1.0";
-          src = self;
+          # Only the crate itself: edits to flake.nix, CLAUDE.md etc. don't
+          # invalidate the build.
+          src = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = pkgs.lib.fileset.unions [
+              ./Cargo.toml
+              ./Cargo.lock
+              ./src
+            ];
+          };
           cargoLock.lockFile = ./Cargo.lock;
 
           nativeBuildInputs = with pkgs; [ pkg-config makeWrapper ];
@@ -33,6 +41,13 @@
             mainProgram = "lyrebird";
           };
         };
+      in
+      {
+        packages.default = lyrebird;
+
+        # `nix flake check` builds everything under checks — this makes it
+        # build the package, whose checkPhase runs the cargo test suite.
+        checks.build = lyrebird;
 
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
