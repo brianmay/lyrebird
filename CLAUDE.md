@@ -57,9 +57,10 @@ ffmpeg -i "$f" -vf "select='not(mod(n\,1000))',scale=320:-1,tile=4x4" \
 
 ## Manifest format (input to `lyrebird resolve`)
 
-Tab-separated text file, one row per ripped file. Row "kind" determines the remaining columns:
+Tab-separated text file, one row per ripped file. The first line must be the marker `#lyrebird:manifest` — resolve refuses files without it (and points at validate/apply if handed a rename plan by mistake). `lyrebird template` writes it automatically. Row "kind" determines the remaining columns:
 
 ```
+#lyrebird:manifest
 title_01.mkv	tv	84958	1	1
 title_02.mkv	tv	84958	1	2
 title_03.mkv	tv	84958	1	3
@@ -95,9 +96,10 @@ Consequences for the design:
 
 ## Intermediate format: RenamePlan / `renames.txt`
 
-Output of the resolve stage, input to validate/apply stages. Three tab-separated columns:
+Output of the resolve stage, input to validate/apply stages. The first line must be the marker `#lyrebird:renames` (written by resolve; validate/apply refuse files without it, and point back at resolve if handed a manifest). Three tab-separated columns:
 
 ```
+#lyrebird:renames
 title_01.mkv	The Owl House (2020)/Season 01/The Owl House - s01e01 - A Lying Witch and a Warden.mkv	1320
 title_02.mkv	The Owl House (2020)/Season 01/The Owl House - s01e02 - Witches Before Wizards.mkv	1350
 ```

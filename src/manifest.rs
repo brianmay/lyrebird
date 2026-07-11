@@ -34,10 +34,39 @@ pub enum ManifestRow {
     },
 }
 
+/// First-line markers distinguishing the two tab-separated file kinds, so a
+/// manifest can never be fed to validate/apply or a rename plan to resolve.
+/// Comment-prefixed, so the row parsers skip them like any other comment.
+pub const MANIFEST_MARKER: &str = "#lyrebird:manifest";
+pub const RENAMES_MARKER: &str = "#lyrebird:renames";
+
+pub fn expect_marker(content: &str, expected: &str) -> Result<()> {
+    let first = content.lines().next().map(str::trim).unwrap_or("");
+    if first == expected {
+        return Ok(());
+    }
+    match first {
+        RENAMES_MARKER => bail!(
+            "this file is a rename plan (first line {RENAMES_MARKER}) — \
+             resolve takes a manifest; run validate or apply on this file instead"
+        ),
+        MANIFEST_MARKER => bail!(
+            "this file is a manifest (first line {MANIFEST_MARKER}) — \
+             run lyrebird resolve on it first to produce a rename plan"
+        ),
+        _ => bail!(
+            "first line must be {expected} — regenerate the file with lyrebird, \
+             or add that line if it was written by hand"
+        ),
+    }
+}
+
 pub fn parse(path: &Path) -> Result<Vec<ManifestRow>> {
-    let file = std::fs::File::open(path)
+    let content = std::fs::read_to_string(path)
         .with_context(|| format!("could not open manifest {}", path.display()))?;
-    parse_reader(file).with_context(|| format!("in manifest {}", path.display()))
+    expect_marker(&content, MANIFEST_MARKER)
+        .with_context(|| format!("in manifest {}", path.display()))?;
+    parse_reader(content.as_bytes()).with_context(|| format!("in manifest {}", path.display()))
 }
 
 pub fn parse_reader<R: Read>(reader: R) -> Result<Vec<ManifestRow>> {
@@ -151,8 +180,9 @@ pub fn template(files: &[std::path::PathBuf], output: &Path) -> Result<()> {
 }
 
 fn template_body(files: &[(String, Option<f64>)]) -> String {
-    let mut out = String::from(
-        "# lyrebird manifest — edit each line, then run: lyrebird resolve <this file>\n\
+    let mut out = String::from(MANIFEST_MARKER);
+    out.push_str(
+        "\n# lyrebird manifest — edit each line, then run: lyrebird resolve <this file>\n\
          #\n\
          # Row kinds (TAB-separated columns):\n\
          #   <file>  tv      <tmdb_series_id>  <season>  <episode | ep1-ep2>  [expected title]\n\
@@ -303,12 +333,28 @@ mod tests {
     }
 
     #[test]
+    fn markers_distinguish_the_two_file_kinds() {
+        assert!(expect_marker("#lyrebird:manifest\na\tb\n", MANIFEST_MARKER).is_ok());
+        assert!(expect_marker("#lyrebird:renames\na\tb\n", RENAMES_MARKER).is_ok());
+
+        let err = expect_marker("#lyrebird:renames\n", MANIFEST_MARKER).unwrap_err();
+        assert!(format!("{err:#}").contains("run validate or apply on this file instead"));
+
+        let err = expect_marker("#lyrebird:manifest\n", RENAMES_MARKER).unwrap_err();
+        assert!(format!("{err:#}").contains("run lyrebird resolve on it first"));
+
+        let err = expect_marker("a.mkv\ttv\t1\t1\t1\n", MANIFEST_MARKER).unwrap_err();
+        assert!(format!("{err:#}").contains("first line must be #lyrebird:manifest"));
+    }
+
+    #[test]
     fn template_rows_roundtrip_through_the_parser() {
         let body = template_body(&[
             ("title_01.mkv".to_string(), Some(1471.4)),
             ("title 02.mkv".to_string(), None),
         ]);
 
+        assert!(body.starts_with("#lyrebird:manifest\n"));
         assert!(body.contains("# duration: 24m31s (1471s)\ntitle_01.mkv\ttv\tSERIES_ID\t1\t1\n"));
         assert!(body.contains("# duration: unavailable\ntitle 02.mkv\ttv\tSERIES_ID\t1\t2\n"));
 

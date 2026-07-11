@@ -133,6 +133,8 @@ pub fn resolve(rows: &[ManifestRow], tmdb: &Tmdb) -> Result<Vec<RenamePlan>> {
 
 pub fn write(plans: &[RenamePlan], path: &Path) -> Result<()> {
     let mut out = String::new();
+    out.push_str(crate::manifest::RENAMES_MARKER);
+    out.push('\n');
     for plan in plans {
         let duration = plan
             .expected_duration_secs
@@ -152,9 +154,11 @@ pub struct PlanEntry {
 }
 
 pub fn read(path: &Path) -> Result<Vec<PlanEntry>> {
-    let file = std::fs::File::open(path)
+    let content = std::fs::read_to_string(path)
         .with_context(|| format!("could not open plan {}", path.display()))?;
-    read_reader(file).with_context(|| format!("in plan {}", path.display()))
+    crate::manifest::expect_marker(&content, crate::manifest::RENAMES_MARKER)
+        .with_context(|| format!("in plan {}", path.display()))?;
+    read_reader(content.as_bytes()).with_context(|| format!("in plan {}", path.display()))
 }
 
 fn read_reader<R: std::io::Read>(reader: R) -> Result<Vec<PlanEntry>> {
@@ -469,6 +473,35 @@ mod tests {
             std::fs::read(dir.path().join("taken.mkv")).unwrap(),
             b"precious"
         );
+    }
+
+    #[test]
+    fn write_then_read_roundtrips_with_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("renames.txt");
+        let plans = [RenamePlan {
+            old: "a.mkv".to_string(),
+            new: "A (2020)/A.mkv".to_string(),
+            expected_duration_secs: Some(600),
+        }];
+        write(&plans, &path).unwrap();
+
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .starts_with("#lyrebird:renames\n"));
+        let entries = read(&path).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].plan.new, "A (2020)/A.mkv");
+    }
+
+    #[test]
+    fn read_rejects_wrong_file_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("manifest.txt");
+        std::fs::write(&path, "#lyrebird:manifest\na.mkv\ttv\t1\t1\t1\n").unwrap();
+
+        let err = read(&path).unwrap_err();
+        assert!(format!("{err:#}").contains("run lyrebird resolve on it first"));
     }
 
     #[test]
