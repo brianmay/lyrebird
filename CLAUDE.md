@@ -57,15 +57,15 @@ ffmpeg -i "$f" -vf "select='not(mod(n\,1000))',scale=320:-1,tile=4x4" \
 
 ## Manifest format (input to `lyrebird resolve`)
 
-Tab-separated text file, one row per ripped file. The first line must be the marker `#lyrebird:manifest` — resolve refuses files without it (and points at validate/apply if handed a rename plan by mistake). `lyrebird template` writes it automatically. Row "kind" determines the remaining columns:
+Text file, one row per ripped file, columns separated by `|` with surrounding whitespace trimmed (so columns can be space-aligned; rows containing a tab are still read as tab-separated for pre-pipe files — tabs were dropped as the primary format because editors render them indistinguishably from spaces). A `|` therefore can't appear inside a field; `sanitize` strips it from generated names. The first line must be the marker `#lyrebird:manifest` — resolve refuses files without it (and points at validate/apply if handed a rename plan by mistake). `lyrebird template` writes it automatically. Row "kind" determines the remaining columns:
 
 ```
 #lyrebird:manifest
-title_01.mkv	tv	84958	1	1
-title_02.mkv	tv	84958	1	2
-title_03.mkv	tv	84958	1	3
-special_01.mkv	manual	Show.S00E01.Behind.The.Scenes.mkv	600
-movie_rip.mkv	movie	603
+title_01.mkv   | tv     | 84958 | 1 | 1
+title_02.mkv   | tv     | 84958 | 1 | 2
+title_03.mkv   | tv     | 84958 | 1 | 3
+special_01.mkv | manual | Show.S00E01.Behind.The.Scenes.mkv | 600
+movie_rip.mkv  | movie  | 603
 ```
 
 | Kind | Columns after `source` | Behavior |
@@ -98,12 +98,12 @@ Consequences for the design:
 
 ## Intermediate format: RenamePlan / `renames.txt`
 
-Output of the resolve stage, input to validate/apply stages. The first line must be the marker `#lyrebird:renames` (written by resolve; validate/apply refuse files without it, and point back at resolve if handed a manifest). Three tab-separated columns:
+Output of the resolve stage, input to validate/apply stages. The first line must be the marker `#lyrebird:renames` (written by resolve; validate/apply refuse files without it, and point back at resolve if handed a manifest). Three `|`-separated columns (same format rules as the manifest):
 
 ```
 #lyrebird:renames
-title_01.mkv	The Owl House (2020)/Season 01/The Owl House - s01e01 - A Lying Witch and a Warden.mkv	1320
-title_02.mkv	The Owl House (2020)/Season 01/The Owl House - s01e02 - Witches Before Wizards.mkv	1350
+title_01.mkv | The Owl House (2020)/Season 01/The Owl House - s01e01 - A Lying Witch and a Warden.mkv | 1320
+title_02.mkv | The Owl House (2020)/Season 01/The Owl House - s01e02 - Witches Before Wizards.mkv | 1350
 ```
 
 Columns: `old_path`, `new_path`, `expected_duration_secs` (may be blank if unknown).
@@ -154,7 +154,7 @@ clap = { version = "4", features = ["derive"] }
 strsim = "0.11"       # for fuzzy title matching later (not yet implemented)
 ```
 
-(The `csv` crate was originally suggested but dropped: it doesn't count `#` comment lines when reporting record positions, so error line numbers were wrong for hand-edited files. Plain per-line tab-splitting is simpler and has no quoting semantics to surprise filenames containing quotes.)
+(The `csv` crate was originally suggested but dropped: it doesn't count `#` comment lines when reporting record positions, so error line numbers were wrong for hand-edited files. Plain per-line splitting is simpler and has no quoting semantics to surprise filenames containing quotes. The delimiter later changed from tab to `|`, because editors render tabs indistinguishably from spaces and can silently insert spaces when Tab is pressed; tab-separated rows are still accepted on read.)
 
 ### Suggested module layout
 

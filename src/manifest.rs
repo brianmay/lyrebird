@@ -1,4 +1,4 @@
-//! Parsing of the TMDB-based manifest: one tab-separated row per ripped file.
+//! Parsing of the TMDB-based manifest: one `|`-separated row per ripped file.
 
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
@@ -70,8 +70,8 @@ pub const EXTRA_TYPES: &[&str] = &[
     "other",
 ];
 
-/// First-line markers distinguishing the two tab-separated file kinds, so a
-/// manifest can never be fed to validate/apply or a rename plan to resolve.
+/// First-line markers distinguishing the two file kinds, so a manifest can
+/// never be fed to validate/apply or a rename plan to resolve.
 /// Comment-prefixed, so the row parsers skip them like any other comment.
 pub const MANIFEST_MARKER: &str = "#lyrebird:manifest";
 pub const RENAMES_MARKER: &str = "#lyrebird:renames";
@@ -107,16 +107,23 @@ pub fn parse(path: &Path) -> Result<Vec<ManifestRow>> {
 
 pub fn parse_reader<R: Read>(reader: R) -> Result<Vec<ManifestRow>> {
     let mut rows = Vec::new();
-    for (line, fields) in tsv_lines(reader)? {
+    for (line, fields) in split_rows(reader)? {
         rows.push(parse_record(&fields).with_context(|| format!("manifest line {line}"))?);
     }
     Ok(rows)
 }
 
-/// Splits input into (line number, tab-separated fields), skipping blank
-/// lines and `#` comments. Shared by the manifest and plan readers; line
-/// numbers are 1-based positions in the file, comments included.
-pub fn tsv_lines<R: Read>(reader: R) -> Result<Vec<(u64, Vec<String>)>> {
+/// Splits input into (line number, fields), skipping blank lines and `#`
+/// comments. Shared by the manifest and plan readers; line numbers are
+/// 1-based positions in the file, comments included.
+///
+/// Rows are `|`-separated with fields trimmed, so columns can be
+/// space-aligned and the delimiter is visible in any editor (tabs render as
+/// indistinguishable whitespace). Rows containing a tab are treated as
+/// tab-separated for compatibility with files from older versions. The cost:
+/// `|` can't appear inside a field — `sanitize` already strips it from
+/// generated names, and validate warns about it in targets.
+pub fn split_rows<R: Read>(reader: R) -> Result<Vec<(u64, Vec<String>)>> {
     let mut lines = Vec::new();
     for (idx, line) in BufReader::new(reader).lines().enumerate() {
         let line = line.context("could not read line")?;
@@ -124,7 +131,11 @@ pub fn tsv_lines<R: Read>(reader: R) -> Result<Vec<(u64, Vec<String>)>> {
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        let fields = line.split('\t').map(str::to_string).collect();
+        let delimiter = if line.contains('\t') { '\t' } else { '|' };
+        let fields = line
+            .split(delimiter)
+            .map(|f| f.trim().to_string())
+            .collect();
         lines.push((idx as u64 + 1, fields));
     }
     Ok(lines)
@@ -260,12 +271,12 @@ fn template_body(files: &[(String, Option<f64>)]) -> String {
     out.push_str(
         "\n# lyrebird manifest — edit each line, then run: lyrebird resolve <this file>\n\
          #\n\
-         # Row kinds (TAB-separated columns):\n\
-         #   <file>  tv           <tmdb_series_id>  <season>  <episode | ep1-ep2>  [expected title]\n\
-         #   <file>  movie        <tmdb_movie_id>  [expected title]\n\
-         #   <file>  movie-extra  <tmdb_movie_id>  <extra type>  <name>  [expected duration secs]\n\
-         #   <file>  tv-extra     <tmdb_series_id>  [season]  <extra type>  <name>  [expected duration secs]\n\
-         #   <file>  manual       <new name>  [expected duration secs]\n\
+         # Row kinds (columns separated by '|'; surrounding spaces are ignored):\n\
+         #   <file> | tv          | <tmdb_series_id> | <season> | <episode or ep1-ep2> | [expected title]\n\
+         #   <file> | movie       | <tmdb_movie_id>  | [expected title]\n\
+         #   <file> | movie-extra | <tmdb_movie_id>  | <extra type> | <name> | [expected duration secs]\n\
+         #   <file> | tv-extra    | <tmdb_series_id> | [season] | <extra type> | <name> | [expected duration secs]\n\
+         #   <file> | manual      | <new name> | [expected duration secs]\n\
          #\n\
          # Extra types (Jellyfin folder names): extras, featurettes, trailers,\n\
          # behind the scenes, deleted scenes, interviews, scenes, shorts, clips, other.\n\
@@ -285,7 +296,7 @@ fn template_body(files: &[(String, Option<f64>)]) -> String {
             None => "unavailable".to_string(),
         };
         out.push_str(&format!(
-            "\n# duration: {duration}\n{file}\ttv\tSERIES_ID\t1\t{}\n",
+            "\n# duration: {duration}\n{file} | tv | SERIES_ID | 1 | {}\n",
             episode + 1
         ));
     }
@@ -365,6 +376,30 @@ mod tests {
         }
         match &rows[3] {
             ManifestRow::Movie { movie_id, .. } => assert_eq!(*movie_id, 603),
+            other => panic!("expected movie row, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_pipe_separated_rows_with_alignment() {
+        let manifest = "title 01.mkv | tv    | 84958 | 1 | 1\n\
+                        movie.mkv    | movie | 603   | The Matrix\n";
+        let rows = parse_reader(manifest.as_bytes()).unwrap();
+        assert_eq!(rows.len(), 2);
+
+        match &rows[0] {
+            ManifestRow::Tv {
+                source, series_id, ..
+            } => {
+                assert_eq!(source, "title 01.mkv");
+                assert_eq!(*series_id, 84958);
+            }
+            other => panic!("expected tv row, got {other:?}"),
+        }
+        match &rows[1] {
+            ManifestRow::Movie { expected_title, .. } => {
+                assert_eq!(expected_title.as_deref(), Some("The Matrix"))
+            }
             other => panic!("expected movie row, got {other:?}"),
         }
     }
@@ -497,8 +532,10 @@ mod tests {
         ]);
 
         assert!(body.starts_with("#lyrebird:manifest\n"));
-        assert!(body.contains("# duration: 24m31s (1471s)\ntitle_01.mkv\ttv\tSERIES_ID\t1\t1\n"));
-        assert!(body.contains("# duration: unavailable\ntitle 02.mkv\ttv\tSERIES_ID\t1\t2\n"));
+        assert!(
+            body.contains("# duration: 24m31s (1471s)\ntitle_01.mkv | tv | SERIES_ID | 1 | 1\n")
+        );
+        assert!(body.contains("# duration: unavailable\ntitle 02.mkv | tv | SERIES_ID | 1 | 2\n"));
 
         // The pre-filled rows must parse once SERIES_ID is replaced...
         let edited = body.replace("SERIES_ID", "84958");

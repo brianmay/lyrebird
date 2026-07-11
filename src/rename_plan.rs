@@ -199,11 +199,10 @@ pub fn write(plans: &[RenamePlan], path: &Path) -> Result<()> {
     out.push_str(crate::manifest::RENAMES_MARKER);
     out.push('\n');
     for plan in plans {
-        let duration = plan
-            .expected_duration_secs
-            .map(|d| d.to_string())
-            .unwrap_or_default();
-        out.push_str(&format!("{}\t{}\t{}\n", plan.old, plan.new, duration));
+        out.push_str(&match plan.expected_duration_secs {
+            Some(duration) => format!("{} | {} | {duration}\n", plan.old, plan.new),
+            None => format!("{} | {}\n", plan.old, plan.new),
+        });
     }
     std::fs::write(path, out).with_context(|| format!("could not write {}", path.display()))
 }
@@ -226,7 +225,7 @@ pub fn read(path: &Path) -> Result<Vec<PlanEntry>> {
 
 fn read_reader<R: std::io::Read>(reader: R) -> Result<Vec<PlanEntry>> {
     let mut entries = Vec::new();
-    for (line, fields) in crate::manifest::tsv_lines(reader)? {
+    for (line, fields) in crate::manifest::split_rows(reader)? {
         let old = match fields.first().filter(|s| !s.trim().is_empty()) {
             Some(s) => s.to_string(),
             None => anyhow::bail!("plan line {line}: missing old path"),
@@ -496,6 +495,18 @@ mod tests {
     fn sanitize_strips_illegal_chars() {
         assert_eq!(sanitize("What / Why: A \"Story\"?"), "What  Why A Story");
         assert_eq!(sanitize("Airplane!"), "Airplane!");
+    }
+
+    #[test]
+    fn read_parses_pipe_rows() {
+        let plan = "a.mkv | A (2020)/A.mkv | 600\n\
+                    b with space.mkv | B (1999)/B.mkv\n";
+        let entries = read_reader(plan.as_bytes()).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].plan.new, "A (2020)/A.mkv");
+        assert_eq!(entries[0].plan.expected_duration_secs, Some(600));
+        assert_eq!(entries[1].plan.old, "b with space.mkv");
+        assert_eq!(entries[1].plan.expected_duration_secs, None);
     }
 
     #[test]

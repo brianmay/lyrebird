@@ -21,17 +21,17 @@ $ lyrebird apply renames.txt           # re-validates, then executes the renames
 
 ## The manifest
 
-Tab-separated, one row per ripped file; the first line must be the `#lyrebird:manifest` marker (`lyrebird template` writes it). The row kind determines the remaining columns:
+One row per ripped file, columns separated by `|` (surrounding spaces are ignored, so you can align columns however you like; rows containing a tab are read as tab-separated for compatibility with older files). The first line must be the `#lyrebird:manifest` marker (`lyrebird template` writes it). The row kind determines the remaining columns:
 
 ```
 #lyrebird:manifest
-title_01.mkv	tv	84958	1	1
-title_02.mkv	tv	84958	1	2	Witches Before Wizards
-title_03.mkv	tv	84958	1	3-4
-movie_rip.mkv	movie	161795
-making_of.mkv	movie-extra	161795	featurettes	Reflections from the Deep
-gag_reel.mkv	tv-extra	84958	2	extras	Gag Reel
-oddball.mkv	manual	Show (2020)/Season 00/Show - s00e01 - Pilot Workprint.mkv	1290
+title_01.mkv  | tv    | 84958  | 1 | 1
+title_02.mkv  | tv    | 84958  | 1 | 2   | Witches Before Wizards
+title_03.mkv  | tv    | 84958  | 1 | 3-4
+movie_rip.mkv | movie | 161795
+making_of.mkv | movie-extra | 161795 | featurettes | Reflections from the Deep
+gag_reel.mkv  | tv-extra    | 84958  | 2 | extras  | Gag Reel
+oddball.mkv   | manual | Show (2020)/Season 00/Show - s00e01 - Pilot Workprint.mkv | 1290
 ```
 
 | Kind | Columns after the kind | Result |
