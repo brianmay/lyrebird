@@ -193,7 +193,7 @@ lyrebird apply    renames.txt                          # Stage 4: execute mv, on
 lyrebird sheet    *.mkv                                # Stage 0 (maybe): generate contact sheet PNGs
 ```
 
-**Decided**: the three stay separate subcommands, and `apply` re-runs the full validation itself every time, refusing on any error — no `--force`, no reliance on a prior (possibly stale) validate run. `validate` remains useful standalone for iterating on a plan. `apply` also keeps a last-moment no-clobber check per rename, since `fs::rename` would otherwise silently overwrite a target that appeared after validation.
+**Decided**: the three stay separate subcommands, and `apply` re-runs the full validation itself every time, refusing on any error — no `--force`, no reliance on a prior (possibly stale) validate run. `validate` remains useful standalone for iterating on a plan. `apply` also keeps a last-moment no-clobber check per rename, since `fs::rename` would otherwise silently overwrite a target that appeared after validation. When source and target are on different filesystems (`fs::rename` fails with EXDEV), `apply` falls back to copy-then-remove: copy to a `.lyrebird-partial` file in the target directory, verify the byte count, rename into place (same-filesystem, atomic), then delete the source — an interrupted copy can never leave a plausible-looking target or lose the source.
 
 ## Open questions / not yet decided
 

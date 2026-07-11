@@ -178,11 +178,50 @@ pub fn apply(entries: &[PlanEntry], root: &Path) -> Result<()> {
                 plan.new
             );
         }
-        std::fs::rename(&source, &target)
-            .with_context(|| format!("could not rename '{}' to '{}'", plan.old, plan.new))?;
-        println!("renamed: {} -> {}", plan.old, plan.new);
+        match std::fs::rename(&source, &target) {
+            Ok(()) => println!("renamed: {} -> {}", plan.old, plan.new),
+            Err(err) if err.kind() == std::io::ErrorKind::CrossesDevices => {
+                copy_then_remove(&source, &target).with_context(|| {
+                    format!(
+                        "could not copy '{}' to '{}' (cross-filesystem)",
+                        plan.old, plan.new
+                    )
+                })?;
+                println!("copied: {} -> {} (cross-filesystem)", plan.old, plan.new);
+            }
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("could not rename '{}' to '{}'", plan.old, plan.new))
+            }
+        }
     }
     Ok(())
+}
+
+/// Fallback for renames across filesystems, where `fs::rename` fails with
+/// EXDEV. Copies to a `.lyrebird-partial` file in the target directory,
+/// verifies the byte count, renames into place (same-filesystem, so atomic),
+/// and only then removes the source — an interrupted copy can never leave a
+/// plausible-looking target or lose the source.
+fn copy_then_remove(source: &Path, target: &Path) -> Result<()> {
+    let mut partial_name = target.file_name().unwrap_or_default().to_os_string();
+    partial_name.push(".lyrebird-partial");
+    let partial = target.with_file_name(partial_name);
+
+    let result = (|| {
+        let copied = std::fs::copy(source, &partial).context("copy failed")?;
+        let expected = std::fs::metadata(source)?.len();
+        if copied != expected {
+            anyhow::bail!("copied {copied} bytes but source is {expected} bytes");
+        }
+        std::fs::rename(&partial, target).context("could not move copy into place")?;
+        std::fs::remove_file(source).context("copy succeeded but could not remove source")
+    })();
+
+    if result.is_err() && partial.exists() {
+        let _ = std::fs::remove_file(&partial);
+    }
+    result
 }
 
 /// `Series (Year)/Season SS/Series - sSSeEE - Episode Title.ext`
@@ -329,6 +368,20 @@ mod tests {
             .path()
             .join("Show (2020)/Season 01/Show - s01e01 - Pilot.mkv");
         assert_eq!(std::fs::read(target).unwrap(), b"video");
+    }
+
+    #[test]
+    fn copy_then_remove_moves_content_and_cleans_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("src.mkv");
+        let target = dir.path().join("dst.mkv");
+        std::fs::write(&source, b"payload").unwrap();
+
+        copy_then_remove(&source, &target).unwrap();
+
+        assert!(!source.exists());
+        assert_eq!(std::fs::read(&target).unwrap(), b"payload");
+        assert!(!dir.path().join("dst.mkv.lyrebird-partial").exists());
     }
 
     #[test]
