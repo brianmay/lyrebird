@@ -26,6 +26,26 @@ pub enum ManifestRow {
         movie_id: u32,
         expected_title: Option<String>,
     },
+    /// A movie's special feature: lands in a Jellyfin extras subfolder
+    /// (`Title (Year)/<extra_type>/<name>.ext`) so it attaches to the movie.
+    MovieExtra {
+        source: String,
+        movie_id: u32,
+        extra_type: String,
+        name: String,
+        expected_duration: Option<u64>,
+    },
+    /// A show's special feature: series-wide without a season
+    /// (`Series (Year)/<extra_type>/...`), season-specific with one
+    /// (`Series (Year)/Season SS/<extra_type>/...`).
+    TvExtra {
+        source: String,
+        series_id: u32,
+        season: Option<u32>,
+        extra_type: String,
+        name: String,
+        expected_duration: Option<u64>,
+    },
     /// Content not on TMDB (specials, extras) — target path supplied directly.
     Manual {
         source: String,
@@ -33,6 +53,22 @@ pub enum ManifestRow {
         expected_duration: Option<u64>,
     },
 }
+
+/// Subfolder names Jellyfin recognizes as extras of the containing
+/// movie/series/season. A typo here would silently detach the extra, so the
+/// type is validated at parse time.
+pub const EXTRA_TYPES: &[&str] = &[
+    "extras",
+    "featurettes",
+    "trailers",
+    "behind the scenes",
+    "deleted scenes",
+    "interviews",
+    "scenes",
+    "shorts",
+    "clips",
+    "other",
+];
 
 /// First-line markers distinguishing the two tab-separated file kinds, so a
 /// manifest can never be fed to validate/apply or a rename plan to resolve.
@@ -115,23 +151,63 @@ fn parse_record(fields: &[String]) -> Result<ManifestRow> {
             movie_id: parse_field(fields, 2, "tmdb_movie_id")?,
             expected_title: optional_field(fields, 3),
         }),
-        "manual" => {
-            let new_name = field(fields, 2, "new_name")?.to_string();
-            let expected_duration = match fields.get(3).map(|s| s.trim()).filter(|s| !s.is_empty())
-            {
-                Some(s) => Some(
-                    s.parse()
-                        .with_context(|| format!("invalid expected_duration_secs '{s}'"))?,
-                ),
-                None => None,
+        "movie-extra" => Ok(ManifestRow::MovieExtra {
+            source,
+            movie_id: parse_field(fields, 2, "tmdb_movie_id")?,
+            extra_type: parse_extra_type(field(fields, 3, "extra_type")?)?,
+            name: field(fields, 4, "name")?.to_string(),
+            expected_duration: optional_duration(fields, 5)?,
+        }),
+        "tv-extra" => {
+            let series_id = parse_field(fields, 2, "tmdb_series_id")?;
+            // The season column is optional; a number there is a season,
+            // anything else is the extra type (which is never numeric).
+            let after_id = field(fields, 3, "season or extra_type")?;
+            let (season, type_idx) = if after_id.chars().all(|c| c.is_ascii_digit()) {
+                (Some(parse_field(fields, 3, "season")?), 4)
+            } else {
+                (None, 3)
             };
-            Ok(ManifestRow::Manual {
+            Ok(ManifestRow::TvExtra {
                 source,
-                new_name,
-                expected_duration,
+                series_id,
+                season,
+                extra_type: parse_extra_type(field(fields, type_idx, "extra_type")?)?,
+                name: field(fields, type_idx + 1, "name")?.to_string(),
+                expected_duration: optional_duration(fields, type_idx + 2)?,
             })
         }
-        other => bail!("unknown row kind '{other}' (expected tv, movie, or manual)"),
+        "manual" => Ok(ManifestRow::Manual {
+            source,
+            new_name: field(fields, 2, "new_name")?.to_string(),
+            expected_duration: optional_duration(fields, 3)?,
+        }),
+        other => bail!(
+            "unknown row kind '{other}' (expected tv, movie, movie-extra, tv-extra, or manual)"
+        ),
+    }
+}
+
+fn parse_extra_type(s: &str) -> Result<String> {
+    let extra_type = s.trim().to_lowercase();
+    if EXTRA_TYPES.contains(&extra_type.as_str()) {
+        Ok(extra_type)
+    } else {
+        bail!(
+            "unknown extra type '{s}' — Jellyfin folder names are: {}",
+            EXTRA_TYPES.join(", ")
+        )
+    }
+}
+
+fn optional_duration(fields: &[String], idx: usize) -> Result<Option<u64>> {
+    match fields.get(idx).map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        Some(s) => {
+            Ok(Some(s.parse().with_context(|| {
+                format!("invalid expected_duration_secs '{s}'")
+            })?))
+        }
+        None => Ok(None),
     }
 }
 
@@ -185,9 +261,14 @@ fn template_body(files: &[(String, Option<f64>)]) -> String {
         "\n# lyrebird manifest — edit each line, then run: lyrebird resolve <this file>\n\
          #\n\
          # Row kinds (TAB-separated columns):\n\
-         #   <file>  tv      <tmdb_series_id>  <season>  <episode | ep1-ep2>  [expected title]\n\
-         #   <file>  movie   <tmdb_movie_id>  [expected title]\n\
-         #   <file>  manual  <new name>  [expected duration secs]\n\
+         #   <file>  tv           <tmdb_series_id>  <season>  <episode | ep1-ep2>  [expected title]\n\
+         #   <file>  movie        <tmdb_movie_id>  [expected title]\n\
+         #   <file>  movie-extra  <tmdb_movie_id>  <extra type>  <name>  [expected duration secs]\n\
+         #   <file>  tv-extra     <tmdb_series_id>  [season]  <extra type>  <name>  [expected duration secs]\n\
+         #   <file>  manual       <new name>  [expected duration secs]\n\
+         #\n\
+         # Extra types (Jellyfin folder names): extras, featurettes, trailers,\n\
+         # behind the scenes, deleted scenes, interviews, scenes, shorts, clips, other.\n\
          #\n\
          # Find TMDB ids at https://www.themoviedb.org — the number in the title's URL.\n\
          # Rows are pre-filled as tv season 1 with episodes in file order; SERIES_ID\n\
@@ -305,6 +386,67 @@ mod tests {
             }
             other => panic!("expected movie row, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_extra_rows() {
+        let manifest = "d2t4.mkv\tmovie-extra\t161795\tfeaturettes\tEchos in Time\t600\n\
+                        d2t11.mkv\tmovie-extra\t161795\tTrailers\tTrailer\n\
+                        s1.mkv\ttv-extra\t84958\tbehind the scenes\tMaking Of\n\
+                        s2.mkv\ttv-extra\t84958\t2\textras\tSeason Two Gag Reel\t300\n";
+        let rows = parse_reader(manifest.as_bytes()).unwrap();
+
+        match &rows[0] {
+            ManifestRow::MovieExtra {
+                movie_id,
+                extra_type,
+                name,
+                expected_duration,
+                ..
+            } => {
+                assert_eq!(*movie_id, 161795);
+                assert_eq!(extra_type, "featurettes");
+                assert_eq!(name, "Echos in Time");
+                assert_eq!(*expected_duration, Some(600));
+            }
+            other => panic!("expected movie-extra row, got {other:?}"),
+        }
+        match &rows[1] {
+            // Extra types are normalized to Jellyfin's lowercase folder names.
+            ManifestRow::MovieExtra { extra_type, .. } => assert_eq!(extra_type, "trailers"),
+            other => panic!("expected movie-extra row, got {other:?}"),
+        }
+        match &rows[2] {
+            ManifestRow::TvExtra {
+                season, extra_type, ..
+            } => {
+                assert_eq!(*season, None);
+                assert_eq!(extra_type, "behind the scenes");
+            }
+            other => panic!("expected tv-extra row, got {other:?}"),
+        }
+        match &rows[3] {
+            ManifestRow::TvExtra {
+                season,
+                extra_type,
+                name,
+                expected_duration,
+                ..
+            } => {
+                assert_eq!(*season, Some(2));
+                assert_eq!(extra_type, "extras");
+                assert_eq!(name, "Season Two Gag Reel");
+                assert_eq!(*expected_duration, Some(300));
+            }
+            other => panic!("expected tv-extra row, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_extra_type() {
+        let err =
+            parse_reader("x.mkv\tmovie-extra\t603\tfeaturete\tOops\n".as_bytes()).unwrap_err();
+        assert!(format!("{err:#}").contains("unknown extra type 'featurete'"));
     }
 
     #[test]

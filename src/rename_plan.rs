@@ -18,8 +18,41 @@ pub struct RenamePlan {
     pub expected_duration_secs: Option<u64>,
 }
 
+fn lookup_series(
+    cache: &mut HashMap<u32, crate::tmdb::Series>,
+    tmdb: &Tmdb,
+    series_id: u32,
+    source: &str,
+) -> Result<crate::tmdb::Series> {
+    if let Some(series) = cache.get(&series_id) {
+        return Ok(series.clone());
+    }
+    let series = tmdb
+        .series(series_id)
+        .with_context(|| format!("{source}: looking up TMDB series {series_id}"))?;
+    cache.insert(series_id, series.clone());
+    Ok(series)
+}
+
+fn lookup_movie(
+    cache: &mut HashMap<u32, crate::tmdb::Movie>,
+    tmdb: &Tmdb,
+    movie_id: u32,
+    source: &str,
+) -> Result<crate::tmdb::Movie> {
+    if let Some(movie) = cache.get(&movie_id) {
+        return Ok(movie.clone());
+    }
+    let movie = tmdb
+        .movie(movie_id)
+        .with_context(|| format!("{source}: looking up TMDB movie {movie_id}"))?;
+    cache.insert(movie_id, movie.clone());
+    Ok(movie)
+}
+
 pub fn resolve(rows: &[ManifestRow], tmdb: &Tmdb) -> Result<Vec<RenamePlan>> {
     let mut series_cache: HashMap<u32, crate::tmdb::Series> = HashMap::new();
+    let mut movie_cache: HashMap<u32, crate::tmdb::Movie> = HashMap::new();
     let mut plans = Vec::with_capacity(rows.len());
 
     for row in rows {
@@ -32,16 +65,7 @@ pub fn resolve(rows: &[ManifestRow], tmdb: &Tmdb) -> Result<Vec<RenamePlan>> {
                 episode_end,
                 expected_title,
             } => {
-                let series = match series_cache.get(series_id) {
-                    Some(series) => series.clone(),
-                    None => {
-                        let series = tmdb.series(*series_id).with_context(|| {
-                            format!("{source}: looking up TMDB series {series_id}")
-                        })?;
-                        series_cache.insert(*series_id, series.clone());
-                        series
-                    }
-                };
+                let series = lookup_series(&mut series_cache, tmdb, *series_id, source)?;
 
                 let episodes = (*episode..=episode_end.unwrap_or(*episode))
                     .map(|ep| {
@@ -98,9 +122,7 @@ pub fn resolve(rows: &[ManifestRow], tmdb: &Tmdb) -> Result<Vec<RenamePlan>> {
                 movie_id,
                 expected_title,
             } => {
-                let movie = tmdb
-                    .movie(*movie_id)
-                    .with_context(|| format!("{source}: looking up TMDB movie {movie_id}"))?;
+                let movie = lookup_movie(&mut movie_cache, tmdb, *movie_id, source)?;
                 if let Some(expected) = expected_title {
                     if let Some(score) = title_mismatch(expected, &[&movie.title]) {
                         eprintln!(
@@ -114,6 +136,47 @@ pub fn resolve(rows: &[ManifestRow], tmdb: &Tmdb) -> Result<Vec<RenamePlan>> {
                     old: source.clone(),
                     new: movie_path(&movie.title, movie.release_year(), extension_of(source)),
                     expected_duration_secs: movie.runtime.map(|mins| mins * 60),
+                }
+            }
+            ManifestRow::MovieExtra {
+                source,
+                movie_id,
+                extra_type,
+                name,
+                expected_duration,
+            } => {
+                let movie = lookup_movie(&mut movie_cache, tmdb, *movie_id, source)?;
+                RenamePlan {
+                    old: source.clone(),
+                    new: extra_path(
+                        &with_year(&sanitize(&movie.title), movie.release_year()),
+                        None,
+                        extra_type,
+                        name,
+                        extension_of(source),
+                    ),
+                    expected_duration_secs: *expected_duration,
+                }
+            }
+            ManifestRow::TvExtra {
+                source,
+                series_id,
+                season,
+                extra_type,
+                name,
+                expected_duration,
+            } => {
+                let series = lookup_series(&mut series_cache, tmdb, *series_id, source)?;
+                RenamePlan {
+                    old: source.clone(),
+                    new: extra_path(
+                        &with_year(&sanitize(&series.name), series.first_air_year()),
+                        *season,
+                        extra_type,
+                        name,
+                        extension_of(source),
+                    ),
+                    expected_duration_secs: *expected_duration,
                 }
             }
             ManifestRow::Manual {
@@ -285,6 +348,22 @@ fn movie_path(title: &str, year: Option<&str>, ext: &str) -> String {
     format!("{name}/{name}.{ext}")
 }
 
+/// Jellyfin extras subfolder inside the movie/series (or season) folder:
+/// `<parent_dir>[/Season SS]/<extra_type>/<Name>.ext`.
+fn extra_path(
+    parent_dir: &str,
+    season: Option<u32>,
+    extra_type: &str,
+    name: &str,
+    ext: &str,
+) -> String {
+    let name = sanitize(name);
+    match season {
+        Some(season) => format!("{parent_dir}/Season {season:02}/{extra_type}/{name}.{ext}"),
+        None => format!("{parent_dir}/{extra_type}/{name}.{ext}"),
+    }
+}
+
 fn with_year(name: &str, year: Option<&str>) -> String {
     match year {
         Some(year) => format!("{name} ({year})"),
@@ -374,6 +453,24 @@ mod tests {
         assert_eq!(
             movie_path("Airplane!", Some("1980"), "mkv"),
             "Airplane! (1980)/Airplane! (1980).mkv"
+        );
+    }
+
+    #[test]
+    fn extra_paths_land_in_jellyfin_folders() {
+        assert_eq!(
+            extra_path(
+                "Ghosts of the Abyss (2003)",
+                None,
+                "featurettes",
+                "Echos in Time",
+                "mkv"
+            ),
+            "Ghosts of the Abyss (2003)/featurettes/Echos in Time.mkv"
+        );
+        assert_eq!(
+            extra_path("Some Show (1999)", Some(2), "extras", "Gag Reel", "mkv"),
+            "Some Show (1999)/Season 02/extras/Gag Reel.mkv"
         );
     }
 

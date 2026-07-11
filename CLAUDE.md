@@ -72,7 +72,9 @@ movie_rip.mkv	movie	603
 |---|---|---|
 | `tv` | `tmdb_series_id`, `season`, `episode` | Look up series name + first-air year + episode title + runtime from TMDB. Build relative path `Series (Year)/Season SS/Series - sSSeEE - Episode Title.mkv` (see Output naming convention). The `episode` column also accepts a range `3-4` for a rip containing several episodes: filename gets `sSSe03-e04`, episode titles join with " & ", expected duration is the sum of the episode runtimes. Optional trailing column `expected_title`: the title the user expects (typed from the disc/box); resolve warns if TMDB's title has Jaro-Winkler similarity < 0.7 (case-insensitive; for a range, matching any one episode's title suffices). |
 | `movie` | `tmdb_movie_id` | Look up movie title + year + runtime from TMDB. Build relative path `Title (Year)/Title (Year).mkv`. Optional trailing `expected_title` column, same fuzzy check as `tv`. |
-| `manual` | `new_name`, `expected_duration_secs` (optional) | Not on TMDB (specials/extras). Target path supplied directly, duration optional. |
+| `movie-extra` | `tmdb_movie_id`, `extra_type`, `name`, `expected_duration_secs` (optional) | Special feature attached to a movie: `Title (Year)/<extra_type>/<name>.ext`. `extra_type` must be a Jellyfin extras folder name (`extras`, `featurettes`, `trailers`, `behind the scenes`, `deleted scenes`, `interviews`, `scenes`, `shorts`, `clips`, `other`) — validated at parse time, since a typo would silently detach the extra in Jellyfin. |
+| `tv-extra` | `tmdb_series_id`, `season` (optional), `extra_type`, `name`, `expected_duration_secs` (optional) | Special feature attached to a series (`Series (Year)/<extra_type>/...`) or, with a season, to that season (`Series (Year)/Season SS/<extra_type>/...`). The optional season is disambiguated from the extra type by being numeric. |
+| `manual` | `new_name`, `expected_duration_secs` (optional) | Anything else. Target path supplied directly, duration optional. |
 
 Comment lines start with `#` and should be skipped.
 
