@@ -69,7 +69,7 @@ movie_rip.mkv	movie	603
 
 | Kind | Columns after `source` | Behavior |
 |---|---|---|
-| `tv` | `tmdb_series_id`, `season`, `episode` | Look up series name + first-air year + episode title + runtime from TMDB. Build relative path `Series (Year)/Season SS/Series - sSSeEE - Episode Title.mkv` (see Output naming convention). |
+| `tv` | `tmdb_series_id`, `season`, `episode` | Look up series name + first-air year + episode title + runtime from TMDB. Build relative path `Series (Year)/Season SS/Series - sSSeEE - Episode Title.mkv` (see Output naming convention). The `episode` column also accepts a range `3-4` for a rip containing several episodes: filename gets `sSSe03-e04`, episode titles join with " & ", expected duration is the sum of the episode runtimes. |
 | `movie` | `tmdb_movie_id` | Look up movie title + year + runtime from TMDB. Build relative path `Title (Year)/Title (Year).mkv`. |
 | `manual` | `new_name`, `expected_duration_secs` (optional) | Not on TMDB (specials/extras). Target path supplied directly, duration optional. |
 
@@ -91,7 +91,7 @@ Consequences for the design:
 - **Validation changes**: path separators between the folder/season/filename components are expected, so the "contains path separators" check applies per-component instead (no empty components, no illegal filename chars, no `..`).
 - **Library roots differ by type** (`/minion/media/tv` vs `/minion/media/movies`). Not yet decided how apply targets the root: run `apply` from within the correct root, or a `--dest-root` flag. For v1, running from the destination root is fine.
 - **Spaces (and `!` etc.) in names are a non-issue in Rust** — `std::fs::rename` takes paths directly, no shell involved. Only the bash prototypes needed quoting care.
-- **Multi-episode files**: the Rename My TV format supports episode ranges (`s%SZe%EZ[-%EZ]`) for rips containing multiple episodes. The manifest `tv` row may need an episode-range form later; not needed for v1.
+- **Multi-episode files** — **implemented**: the manifest `tv` episode column accepts `3-4` (inclusive, same season, end > start). Output uses `sSSe03-e04` — Jellyfin's documented multi-episode form — rather than the literal Rename My TV expansion (`e03-04`); a one-line format change in `tv_path` if the other form turns out to be wanted. Titles join with " & "; expected duration is the sum of episode runtimes (unknown if any episode's runtime is missing).
 
 ## Intermediate format: RenamePlan / `renames.txt`
 

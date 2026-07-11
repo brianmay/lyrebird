@@ -13,6 +13,9 @@ pub enum ManifestRow {
         series_id: u32,
         season: u32,
         episode: u32,
+        /// Set when the rip contains a run of episodes (`3-4` in the episode
+        /// column): the inclusive end of the range.
+        episode_end: Option<u32>,
     },
     Movie {
         source: String,
@@ -62,12 +65,16 @@ fn parse_record(fields: &[String]) -> Result<ManifestRow> {
     let kind = field(fields, 1, "kind")?;
 
     match kind {
-        "tv" => Ok(ManifestRow::Tv {
-            source,
-            series_id: parse_field(fields, 2, "tmdb_series_id")?,
-            season: parse_field(fields, 3, "season")?,
-            episode: parse_field(fields, 4, "episode")?,
-        }),
+        "tv" => {
+            let (episode, episode_end) = parse_episode_range(field(fields, 4, "episode")?)?;
+            Ok(ManifestRow::Tv {
+                source,
+                series_id: parse_field(fields, 2, "tmdb_series_id")?,
+                season: parse_field(fields, 3, "season")?,
+                episode,
+                episode_end,
+            })
+        }
         "movie" => Ok(ManifestRow::Movie {
             source,
             movie_id: parse_field(fields, 2, "tmdb_movie_id")?,
@@ -90,6 +97,27 @@ fn parse_record(fields: &[String]) -> Result<ManifestRow> {
         }
         other => bail!("unknown row kind '{other}' (expected tv, movie, or manual)"),
     }
+}
+
+/// `3` -> (3, None); `3-4` -> (3, Some(4)) for a rip containing several
+/// episodes in one file.
+fn parse_episode_range(s: &str) -> Result<(u32, Option<u32>)> {
+    let Some((start, end)) = s.split_once('-') else {
+        let episode = s
+            .parse()
+            .with_context(|| format!("invalid episode '{s}'"))?;
+        return Ok((episode, None));
+    };
+    let parse = |part: &str| {
+        part.trim()
+            .parse::<u32>()
+            .with_context(|| format!("invalid episode range '{s}'"))
+    };
+    let (start, end) = (parse(start)?, parse(end)?);
+    if end <= start {
+        bail!("invalid episode range '{s}' (end must be greater than start)");
+    }
+    Ok((start, Some(end)))
 }
 
 fn field<'r>(fields: &'r [String], idx: usize, name: &str) -> Result<&'r str> {
@@ -129,9 +157,11 @@ mod tests {
                 series_id,
                 season,
                 episode,
+                episode_end,
             } => {
                 assert_eq!(source, "title_01.mkv");
                 assert_eq!((*series_id, *season, *episode), (84958, 1, 1));
+                assert_eq!(*episode_end, None);
             }
             other => panic!("expected tv row, got {other:?}"),
         }
@@ -155,6 +185,31 @@ mod tests {
             ManifestRow::Movie { movie_id, .. } => assert_eq!(*movie_id, 603),
             other => panic!("expected movie row, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_episode_ranges() {
+        let rows = parse_reader("double.mkv\ttv\t84958\t1\t3-4\n".as_bytes()).unwrap();
+        match &rows[0] {
+            ManifestRow::Tv {
+                episode,
+                episode_end,
+                ..
+            } => {
+                assert_eq!(*episode, 3);
+                assert_eq!(*episode_end, Some(4));
+            }
+            other => panic!("expected tv row, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_backwards_episode_range() {
+        let err = parse_reader("x.mkv\ttv\t84958\t1\t4-3\n".as_bytes()).unwrap_err();
+        assert!(format!("{err:#}").contains("end must be greater than start"));
+
+        let err = parse_reader("x.mkv\ttv\t84958\t1\t3-3\n".as_bytes()).unwrap_err();
+        assert!(format!("{err:#}").contains("end must be greater than start"));
     }
 
     #[test]

@@ -29,6 +29,7 @@ pub fn resolve(rows: &[ManifestRow], tmdb: &Tmdb) -> Result<Vec<RenamePlan>> {
                 series_id,
                 season,
                 episode,
+                episode_end,
             } => {
                 let series = match series_cache.get(series_id) {
                     Some(series) => series.clone(),
@@ -40,9 +41,28 @@ pub fn resolve(rows: &[ManifestRow], tmdb: &Tmdb) -> Result<Vec<RenamePlan>> {
                         series
                     }
                 };
-                let ep = tmdb.episode(*series_id, *season, *episode).with_context(|| {
-                    format!("{source}: looking up TMDB series {series_id} s{season:02}e{episode:02}")
-                })?;
+
+                let episodes = (*episode..=episode_end.unwrap_or(*episode))
+                    .map(|ep| {
+                        tmdb.episode(*series_id, *season, ep).with_context(|| {
+                            format!(
+                                "{source}: looking up TMDB series {series_id} s{season:02}e{ep:02}"
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let title = episodes
+                    .iter()
+                    .map(|ep| ep.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" & ");
+                // Expected duration for a multi-episode rip is the sum of the
+                // episode runtimes; unknown if any episode's runtime is.
+                let runtime_secs = episodes
+                    .iter()
+                    .map(|ep| ep.runtime.map(|mins| mins * 60))
+                    .sum::<Option<u64>>();
+
                 RenamePlan {
                     old: source.clone(),
                     new: tv_path(
@@ -50,10 +70,11 @@ pub fn resolve(rows: &[ManifestRow], tmdb: &Tmdb) -> Result<Vec<RenamePlan>> {
                         series.first_air_year(),
                         *season,
                         *episode,
-                        &ep.name,
+                        *episode_end,
+                        &title,
                         extension_of(source),
                     ),
-                    expected_duration_secs: ep.runtime.map(|mins| mins * 60),
+                    expected_duration_secs: runtime_secs,
                 }
             }
             ManifestRow::Movie { source, movie_id } => {
@@ -165,21 +186,25 @@ pub fn apply(entries: &[PlanEntry], root: &Path) -> Result<()> {
 }
 
 /// `Series (Year)/Season SS/Series - sSSeEE - Episode Title.ext`
-/// (year in the series folder only, not the filename).
+/// (year in the series folder only, not the filename). Multi-episode files
+/// get `sSSeE1-eE2` (Jellyfin's documented multi-episode form).
 fn tv_path(
     series_name: &str,
     year: Option<&str>,
     season: u32,
     episode: u32,
+    episode_end: Option<u32>,
     episode_title: &str,
     ext: &str,
 ) -> String {
     let series = sanitize(series_name);
     let episode_title = sanitize(episode_title);
     let series_dir = with_year(&series, year);
-    format!(
-        "{series_dir}/Season {season:02}/{series} - s{season:02}e{episode:02} - {episode_title}.{ext}"
-    )
+    let code = match episode_end {
+        Some(end) => format!("s{season:02}e{episode:02}-e{end:02}"),
+        None => format!("s{season:02}e{episode:02}"),
+    };
+    format!("{series_dir}/Season {season:02}/{series} - {code} - {episode_title}.{ext}")
 }
 
 /// `Title (Year)/Title (Year).ext` — the movie sits in its own folder.
@@ -218,7 +243,15 @@ mod tests {
     #[test]
     fn tv_path_matches_library_convention() {
         assert_eq!(
-            tv_path("The Owl House", Some("2020"), 1, 1, "A Lying Witch and a Warden", "mkv"),
+            tv_path(
+                "The Owl House",
+                Some("2020"),
+                1,
+                1,
+                None,
+                "A Lying Witch and a Warden",
+                "mkv"
+            ),
             "The Owl House (2020)/Season 01/The Owl House - s01e01 - A Lying Witch and a Warden.mkv"
         );
     }
@@ -226,8 +259,24 @@ mod tests {
     #[test]
     fn tv_path_without_year_omits_parens() {
         assert_eq!(
-            tv_path("Some Show", None, 2, 10, "Title", "mkv"),
+            tv_path("Some Show", None, 2, 10, None, "Title", "mkv"),
             "Some Show/Season 02/Some Show - s02e10 - Title.mkv"
+        );
+    }
+
+    #[test]
+    fn tv_path_episode_range() {
+        assert_eq!(
+            tv_path(
+                "Some Show",
+                Some("1999"),
+                1,
+                1,
+                Some(2),
+                "Part One & Part Two",
+                "mkv"
+            ),
+            "Some Show (1999)/Season 01/Some Show - s01e01-e02 - Part One & Part Two.mkv"
         );
     }
 
