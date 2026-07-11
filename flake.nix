@@ -12,6 +12,28 @@
         pkgs = nixpkgs.legacyPackages.${system};
       in
       {
+        packages.default = pkgs.rustPlatform.buildRustPackage {
+          pname = "lyrebird";
+          version = "0.1.0";
+          src = self;
+          cargoLock.lockFile = ./Cargo.lock;
+
+          nativeBuildInputs = with pkgs; [ pkg-config makeWrapper ];
+          buildInputs = with pkgs; [ openssl ];
+
+          # The binary shells out to ffmpeg/ffprobe at runtime; wrap so the
+          # installed package works without ffmpeg in the user's profile.
+          postInstall = ''
+            wrapProgram $out/bin/lyrebird \
+              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.ffmpeg ]}
+          '';
+
+          meta = {
+            description = "Identify and rename HandBrake video rips using TMDB metadata";
+            mainProgram = "lyrebird";
+          };
+        };
+
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             rustc
